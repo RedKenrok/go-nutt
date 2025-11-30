@@ -1,0 +1,27 @@
+# Test binary, built with `go test -c`
+*.test
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.prof
+
+# Temporary files
+tmp/
+temp/
+
+# Database files
+*.db
+*.db.wal
+
+# Configuration files
+.env
