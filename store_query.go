@@ -87,13 +87,16 @@ func (s *Store[T]) Query(query *Query) ([]T, error) {
 		if b == nil {
 			return nil
 		}
+		dec := msgpack.GetDecoder()
+		defer msgpack.PutDecoder(dec)
 		for _, key := range keysToFetch {
 			data := b.Get([]byte(key))
 			if data == nil {
 				continue
 			}
 			var item T
-			err := msgpack.Unmarshal(data, &item)
+			dec.Reset(bytes.NewReader(data))
+			err := dec.Decode(&item)
 			if err != nil {
 				continue
 			}
@@ -403,10 +406,13 @@ func (s *Store[T]) scanForConditionsTx(tx *bbolt.Tx, conditions []Condition) []s
 	if b == nil {
 		return keys
 	}
+	dec := msgpack.GetDecoder()
+	defer msgpack.PutDecoder(dec)
 	c := b.Cursor()
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		var item T
-		err := msgpack.Unmarshal(v, &item)
+		dec.Reset(bytes.NewReader(v))
+		err := dec.Decode(&item)
 		if err != nil {
 			continue
 		}

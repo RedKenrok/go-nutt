@@ -56,8 +56,16 @@ func (s *Store[T]) Put(value T) error {
 	}
 
 	// Write to WAL file
-	walEnc := msgpack.NewEncoder(s.database.walFile)
+	s.database.walMutex.Lock()
+	var walBuf bytes.Buffer
+	walEnc := msgpack.NewEncoder(&walBuf)
 	err = walEnc.Encode(op)
+	if err != nil {
+		s.database.walMutex.Unlock()
+		return err
+	}
+	_, err = s.database.walFile.Write(walBuf.Bytes())
+	s.database.walMutex.Unlock()
 	if err != nil {
 		return err
 	}
@@ -151,7 +159,9 @@ func (s *Store[T]) PutBatch(values []T) error {
 			return err
 		}
 	}
+	s.database.walMutex.Lock()
 	_, err = s.database.walFile.Write(walBuf.Bytes())
+	s.database.walMutex.Unlock()
 	if err != nil {
 		return err
 	}

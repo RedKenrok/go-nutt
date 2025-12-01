@@ -138,9 +138,7 @@ if err != nil {
 
 ### Query
 
-Status: in progress
-
-You can specify indexes on the data structure and the typed container will automatically ensure the indexes are kept up to date. You can then sort and paginate over this index.
+You can specify indexes on the data structure and the typed container will automatically ensure the indexes are kept up to date. You can then query, sort, and paginate over this index.
 
 ```go
 type User struct {
@@ -169,15 +167,14 @@ for _, user := range users {
 
 #### Query logic
 
-Status: in progress
+Query data using conditions on indexed fields. Multiple conditions are combined with AND logic.
 
 ```go
 // Get a user by their e-mail
 query := &nnut.Query{
-  Conditions: []nutt.Condition{
+  Conditions: []nnut.Condition{
     {Field: "Email", Value: "ron@example.com"},
   },
-  // [...]
 }
 users, err := userStore.Query(query)
 if err != nil {
@@ -194,10 +191,9 @@ Query data by multiple fields using multiple conditions:
 // Get users where email equals "ron@example.com" AND age is greater than 28
 query := &nnut.Query{
 	Conditions: []nnut.Condition{
-	  {Field: "email", Value: "ron@example.com"},
-	  {Field: "age", Value: 28, Operator: nnut.GreaterThan},
+	  {Field: "Email", Value: "ron@example.com"},
+	  {Field: "Age", Value: 28, Operator: nnut.GreaterThan},
 	},
-	// [...]
 }
 
 users, err := userStore.Query(query)
@@ -210,7 +206,7 @@ for _, user := range users {
 ```
 
 Supported operators:
-- **Equals**: Exact match
+- **Equals**: Exact match (default)
 - **GreaterThan**: Value greater than specified
 - **LessThan**: Value less than specified
 - **GreaterThanOrEqual**: Value greater than or equal to specified
@@ -271,18 +267,14 @@ goos: darwin
 goarch: amd64
 pkg: github.com/redkenrok/go-nutt
 cpu: Intel(R) Core(TM) i5-1038NG7 CPU @ 2.00GHz
-BenchmarkGet-8                       	 1423807	      1645 ns/op
-BenchmarkBatchGet-8                  	 1988394	      1200 ns/op
-BenchmarkQuery-8                     	  131059	     18219 ns/op
-BenchmarkQueryMultipleConditions-8   	  122750	     18058 ns/op
-BenchmarkQuerySorting-8              	  103797	     22136 ns/op
-BenchmarkQueryLimitOffset-8          	  141386	     17515 ns/op
-BenchmarkPut-8                       	    9303	    233514 ns/op
-BenchmarkBatchPut-8                  	   55838	     43277 ns/op
-BenchmarkDelete-8                    	   10848	    223286 ns/op
-BenchmarkBatchDelete-8               	   52473	     42947 ns/op
+BenchmarkGet-8                       	 1261446	      1895 ns/op
+BenchmarkBatchGet-8                  	 1628491	      1355 ns/op
+BenchmarkQuery-8                     	     297	   7925576 ns/op
+BenchmarkQueryMultipleConditions-8   	     291	   7977558 ns/op
+BenchmarkQuerySorting-8              	    1844	   1145258 ns/op
+BenchmarkQueryLimitOffset-8          	     308	   7970120 ns/op
+BenchmarkPut-8                       	   42469	     55299 ns/op
+BenchmarkBatchPut-8                  	   56373	     43154 ns/op
+BenchmarkDelete-8                    	   47172	     48139 ns/op
+BenchmarkBatchDelete-8               	   66712	     36394 ns/op
 ```
-
-### Improvements
-
-- Try to update indices lazily reducing the Put and Delete overhead.

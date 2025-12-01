@@ -12,7 +12,7 @@ import (
 
 // Config holds configuration options
 type Config struct {
-	WALFlushSize    int
+	WALFlushSize     int
 	WALFlushInterval time.Duration
 	WALPath          string
 }
@@ -23,6 +23,7 @@ type DB struct {
 	config *Config
 
 	walFile               *os.File
+	walMutex              sync.Mutex
 	operationsBuffer      []operation
 	operationsBufferMutex sync.Mutex
 
@@ -48,7 +49,7 @@ type operation struct {
 // Open opens a database with default config
 func Open(path string) (*DB, error) {
 	config := &Config{
-		WALFlushSize:    1024,
+		WALFlushSize:     1024,
 		WALFlushInterval: time.Minute * 15,
 		WALPath:          path + ".wal",
 	}
@@ -114,7 +115,9 @@ func (db *DB) replayWAL() error {
 	}
 	defer file.Close()
 
-	dec := msgpack.NewDecoder(file)
+	dec := msgpack.GetDecoder()
+	defer msgpack.PutDecoder(dec)
+	dec.Reset(file)
 	for {
 		var op operation
 		err := dec.Decode(&op)

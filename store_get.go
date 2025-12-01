@@ -1,6 +1,7 @@
 package nnut
 
 import (
+	"bytes"
 	"errors"
 
 	"github.com/vmihailenco/msgpack/v5"
@@ -19,7 +20,10 @@ func (s *Store[T]) Get(key string) (T, error) {
 		if data == nil {
 			return errors.New("key not found")
 		}
-		return msgpack.Unmarshal(data, &result)
+		dec := msgpack.GetDecoder()
+		defer msgpack.PutDecoder(dec)
+		dec.Reset(bytes.NewReader(data))
+		return dec.Decode(&result)
 	})
 	return result, err
 }
@@ -33,11 +37,14 @@ func (s *Store[T]) GetBatch(keys []string) (map[string]T, error) {
 			// Bucket not found, return empty
 			return nil
 		}
+		dec := msgpack.GetDecoder()
+		defer msgpack.PutDecoder(dec)
 		for _, key := range keys {
 			data := b.Get([]byte(key))
 			if data != nil {
 				var item T
-				err := msgpack.Unmarshal(data, &item)
+				dec.Reset(bytes.NewReader(data))
+				err := dec.Decode(&item)
 				if err != nil {
 					continue
 				}
