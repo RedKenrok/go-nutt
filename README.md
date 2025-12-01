@@ -2,19 +2,19 @@
 
 > Still very much a work in progress.
 
-A Go library that wraps [go.etcd.io/bbolt](https://github.com/etcd-io/bbolt/#readme) to provide enhanced embedded key-value storage capabilities. It adds a Write Ahead Log (WAL) to reduce write frequency and implements automatic encoding using [msgpack](github.com/vmihailenco/msgpack/#readme), indexing, and encryption.
+A Go library that wraps [go.etcd.io/bbolt](https://github.com/etcd-io/bbolt/#readme) to provide enhanced embedded key-value storage capabilities. It adds a Write Ahead Log (WAL) to reduce write frequency and implements automatic encoding using [msgpack](github.com/vmihailenco/msgpack/#readme) and indexing.
 
 ## Features
 
 - **bbolt wrapper**: Builds on top of the reliable bbolt database for embedded key-value storage;
 - **Write Ahead Log (WAL)**: Reduces disk write frequency by buffering changes in a log before committing to the database;
 - **Automatic indices**: Maintains and updates indices automatically as data is inserted, updated, or deleted;
-- **Automatic encryption**: Marked fields are automatically encrypted when inserted, updated, or deleted and decrypted when retrieved.
+<!--- **Automatic encryption**: Marked fields are automatically encrypted when inserted, updated, or deleted and decrypted when retrieved.-->
 
 ## Installation
 
 ```bash
-go get github.com/redkenrok/nnut
+go get github.com/redkenrok/go-nnut
 ```
 
 ## Configuration
@@ -24,12 +24,9 @@ The library supports various configuration options for customization:
 ```go
 import "github.com/redkenrok/nnut"
 
-// Configure database with encryption key and WAL settings
 config := &nnut.Config{
-	EncryptionAlgorithm: "your-encryption-algorithm",
-  EncryptionKey: []byte("your-32-byte-encryption-key"),
-  WALBufferSize: 1024, // Amount of mutations
-  WALFlushInterval: time.Minute * 15, // Flush every 5 minutes
+  WALFlushSize: 1024, // Flushes when mutations count exceeds
+  WALFlushInterval: time.Minute * 15, // Flushes every 15 minutes
   BBoltOptions: &bolt.Options{
     Timeout: time.Second * 10,
     ReadOnly: false,
@@ -41,11 +38,12 @@ if err != nil {
   log.Fatal(err)
 }
 ```
+<!--EncryptionAlgorithm: "your-encryption-algorithm",
+EncryptionKey: []byte("your-32-byte-encryption-key"),  -->
 
-Configuration options:
-- **EncryptionAlgorithm**: [...]
-- **EncryptionKey**: 32-byte key for encrypting marked fields
-- **WALBufferSize**: Size of the mutations buffer
+<!--- **EncryptionAlgorithm**: [...]
+- **EncryptionKey**: 32-byte key for encrypting marked fields-->
+- **WALFlushSize**: Size of the mutations buffer
 - **WALFlushInterval**: How often to flush WAL to disk
 - **BBoltOptions**: Standard bbolt database options (timeout, read-only mode, etc.)
 
@@ -86,7 +84,7 @@ You can then perform type-safe create, read, update, and delete operations.
 // Create or update a user record
 user := User{
  	UUID: "aa0000a0...",
- 	Email: "John@example.com",
+ 	Email: "ron@example.com",
 }
 err = userStore.Put(user)
 if err != nil {
@@ -94,11 +92,11 @@ if err != nil {
 }
 
 // Read a user by primary key
-retrieved, err := userStore.Get("aa0000a0...")
+user, err = userStore.Get("aa0000a0...")
 if err != nil {
   log.Fatal(err)
 }
-log.Printf("User: %+v", retrieved)
+log.Printf("User: %+v", user)
 
 // Delete a user by primary key
 err = userStore.Delete("aa0000a0...")
@@ -122,9 +120,17 @@ if err != nil {
   log.Fatal(err)
 }
 
+// Batch get by keys
+users, err = userStore.GetBatch([]string{"uuid1", "uuid2"})
+if err != nil {
+  log.Fatal(err)
+}
+for _, user := range users {
+  log.Printf("User: %+v", user)
+}
+
 // Batch delete by keys
-keys := []string{"uuid1", "uuid2"}
-err = userStore.DeleteBatch(keys)
+err = userStore.DeleteBatch([]string{"uuid1", "uuid2"})
 if err != nil {
   log.Fatal(err)
 }
@@ -152,53 +158,45 @@ query := &nnut.Query{
   Sort: nnut.Ascending, // or nnut.Descending to iterate in reverse alphabetical order
 }
 
-users, totalCount, err := userStore.Query(query)
+users, err := userStore.Query(query)
 if err != nil {
   log.Fatal(err)
 }
-log.Printf("Found %d users", totalCount)
-for _, u := range users {
-  log.Printf("User: %+v", u)
+for _, user := range users {
+  log.Printf("User: %+v", user)
 }
 ```
-
-#### Query count
-
-TODO:
 
 #### Query logic
 
 Status: in progress
 
 ```go
-
+// Get a user by their e-mail
 query := &nnut.Query{
-  conditions: []nutt.Condition{
-    Field: "Email",
-    Value: "John@example.com",
-    Operator: nnut.Equals, // This can be left out as equals is the default.
+  Conditions: []nutt.Condition{
+    {Field: "Email", Value: "ron@example.com"},
   },
-  Limit: 1,
+  // [...]
 }
-
-// Read a user by their e-mail
-user, err := userStore.Query(query)
+users, err := userStore.Query(query)
 if err != nil {
   log.Fatal(err)
 }
-log.Printf("User: %+v", user)
+for _, user := range users {
+  log.Printf("User: %+v", user)
+}
 ```
 
 Query data by multiple fields using multiple conditions:
 
 ```go
-// Query users where email equals "john@example.com" AND age is greater than 25
+// Get users where email equals "ron@example.com" AND age is greater than 28
 query := &nnut.Query{
 	Conditions: []nnut.Condition{
-	  {Field: "email", Value: "john@example.com", Operator: nnut.Equals},
-	  {Field: "age", Value: 25, Operator: nnut.GreaterThan},
+	  {Field: "email", Value: "ron@example.com"},
+	  {Field: "age", Value: 28, Operator: nnut.GreaterThan},
 	},
-	PageSize: 48,
 	// [...]
 }
 
@@ -206,16 +204,37 @@ users, err := userStore.Query(query)
 if err != nil {
   log.Fatal(err)
 }
-log.Printf("Found %d users matching criteria", len(users))
+for _, user := range users {
+  log.Printf("User: %+v", user)
+}
 ```
 
 Supported operators:
-- `Equals`: Exact match
-- `GreaterThan`: Value greater than specified
-- `LessThan`: Value less than specified
-- `GreaterThanOrEqual`: Value greater than or equal to specified
-- `LessThanOrEqual`: Value less than or equal to specified
+- **Equals**: Exact match
+- **GreaterThan**: Value greater than specified
+- **LessThan**: Value less than specified
+- **GreaterThanOrEqual**: Value greater than or equal to specified
+- **LessThanOrEqual**: Value less than or equal to specified
 
+#### Query count
+
+To get the number of records matching a query without retrieving the data:
+
+```go
+// Count users with a specific age
+query := &nnut.Query{
+  Conditions: []nnut.Condition{
+    {Field: "Age", Value: 28},
+  },
+}
+count, err := userStore.QueryCount(query)
+if err != nil {
+  log.Fatal(err)
+}
+log.Printf("Found %d users with that email", count)
+```
+
+<!--
 ### Encryption
 
 Status: planned
@@ -242,6 +261,7 @@ type User struct {
 ```
 
 The salt value is also automatically filled in if left empty and it needs to be used for encryption.
+-->
 
 ## Benchmarks
 
@@ -251,13 +271,16 @@ goos: darwin
 goarch: amd64
 pkg: github.com/redkenrok/go-nutt
 cpu: Intel(R) Core(TM) i5-1038NG7 CPU @ 2.00GHz
-BenchmarkGet-8           	 1372632	      1647 ns/op
-BenchmarkBatchGet-8      	 2030139	      1222 ns/op
-BenchmarkQuery-8         	   14161	    150513 ns/op
-BenchmarkPut-8           	    9492	    224384 ns/op
-BenchmarkBatchPut-8      	   52030	     45055 ns/op
-BenchmarkDelete-8        	   10288	    218100 ns/op
-BenchmarkBatchDelete-8   	   46298	     43964 ns/op
+BenchmarkGet-8                       	 1423807	      1645 ns/op
+BenchmarkBatchGet-8                  	 1988394	      1200 ns/op
+BenchmarkQuery-8                     	  131059	     18219 ns/op
+BenchmarkQueryMultipleConditions-8   	  122750	     18058 ns/op
+BenchmarkQuerySorting-8              	  103797	     22136 ns/op
+BenchmarkQueryLimitOffset-8          	  141386	     17515 ns/op
+BenchmarkPut-8                       	    9303	    233514 ns/op
+BenchmarkBatchPut-8                  	   55838	     43277 ns/op
+BenchmarkDelete-8                    	   10848	    223286 ns/op
+BenchmarkBatchDelete-8               	   52473	     42947 ns/op
 ```
 
 ### Improvements

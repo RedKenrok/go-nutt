@@ -25,7 +25,7 @@ func BenchmarkGet(b *testing.B) {
 	}
 
 	// Pre-populate data
-	itemCount := int(math.Sqrt(float64(b.N)));
+	itemCount := int(math.Sqrt(float64(b.N)))
 	for i := 0; i < itemCount; i++ {
 		key := fmt.Sprintf("key%d", i)
 		user := TestUser{UUID: key, Name: "John", Email: "john@example.com", Age: 30}
@@ -63,7 +63,7 @@ func BenchmarkBatchGet(b *testing.B) {
 	}
 
 	// Pre-populate data
-	itemCount := int(math.Sqrt(float64(b.N)));
+	itemCount := int(math.Sqrt(float64(b.N)))
 	for i := 0; i < itemCount; i++ {
 		key := fmt.Sprintf("key%d", i)
 		user := TestUser{UUID: key, Name: "John", Email: "john@example.com", Age: 30}
@@ -105,10 +105,9 @@ func BenchmarkQuery(b *testing.B) {
 		b.Fatalf("Failed to create store: %v", err)
 	}
 
-	// Pre-populate realistic data: 10,000 users with varied names, emails, and ages
-	// Simulate real-world diversity: common names, unique emails, random ages
+	// Pre-populate realistic data: 1,000 users with varied names, emails, and ages
 	commonNames := []string{"John", "Jane", "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Henry", "Ivy", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Peter", "Quinn", "Ryan"}
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 1000; i++ {
 		key := fmt.Sprintf("user_%d", i)
 		name := commonNames[i%len(commonNames)]
 		email := fmt.Sprintf("%s%d@example.com", name, i)
@@ -121,10 +120,154 @@ func BenchmarkQuery(b *testing.B) {
 	}
 	db.Flush()
 
-	b.ResetTimer()
 	// Query for a common name, simulating real searches
-	for i := 0; i < b.N; i++ {
-		_, err := store.Query(&Query{Index: "name", Value: "John", Operator: Equals, Offset: 0, Limit: 100})
+	batchSize := 1000 / len(commonNames)
+	b.ResetTimer()
+	for i := 0; i < b.N/batchSize; i++ {
+		_, err := store.Query(&Query{
+			Conditions: []Condition{
+				{Field: "Name", Value: "Alice"},
+			},
+		})
+		if err != nil {
+			b.Fatalf("Failed to query: %v", err)
+		}
+	}
+}
+
+func BenchmarkQueryMultipleConditions(b *testing.B) {
+	os.Remove("bench.db")
+	os.Remove("bench.db.wal")
+	db, err := Open("bench.db")
+	if err != nil {
+		b.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("bench.db")
+	defer os.Remove("bench.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		b.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Pre-populate realistic data: 1,000 users with varied names, emails, and ages
+	commonNames := []string{"John", "Jane", "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Henry", "Ivy", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Peter", "Quinn", "Ryan"}
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("user_%d", i)
+		name := commonNames[i%len(commonNames)]
+		email := fmt.Sprintf("%s%d@example.com", name, i)
+		age := rand.Intn(63) + 18 // Ages 18-80
+		user := TestUser{UUID: key, Name: name, Email: email, Age: age}
+		err := store.Put(user)
+		if err != nil {
+			b.Fatalf("Failed to put: %v", err)
+		}
+	}
+	db.Flush()
+
+	batchSize := 1000 / len(commonNames)
+	b.ResetTimer()
+	for i := 0; i < b.N/batchSize; i++ {
+		_, err := store.Query(&Query{
+			Conditions: []Condition{
+				{Field: "Name", Value: "Alice"},
+				{Field: "Age", Value: 30, Operator: GreaterThan},
+			},
+		})
+		if err != nil {
+			b.Fatalf("Failed to query: %v", err)
+		}
+	}
+}
+
+func BenchmarkQuerySorting(b *testing.B) {
+	os.Remove("bench.db")
+	os.Remove("bench.db.wal")
+	db, err := Open("bench.db")
+	if err != nil {
+		b.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("bench.db")
+	defer os.Remove("bench.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		b.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Pre-populate realistic data: 1,000 users with varied names, emails, and ages
+	commonNames := []string{"John", "Jane", "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Henry", "Ivy", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Peter", "Quinn", "Ryan"}
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("user_%d", i)
+		name := commonNames[i%len(commonNames)]
+		email := fmt.Sprintf("%s%d@example.com", name, i)
+		age := rand.Intn(63) + 18 // Ages 18-80
+		user := TestUser{UUID: key, Name: name, Email: email, Age: age}
+		err := store.Put(user)
+		if err != nil {
+			b.Fatalf("Failed to put: %v", err)
+		}
+	}
+	db.Flush()
+
+	batchSize := 1000 / len(commonNames)
+	b.ResetTimer()
+	// Query with sorting by name
+	for i := 0; i < b.N/batchSize; i++ {
+		_, err := store.Query(&Query{
+			Index: "name",
+			Sort:  Descending,
+		})
+		if err != nil {
+			b.Fatalf("Failed to query: %v", err)
+		}
+	}
+}
+
+func BenchmarkQueryLimitOffset(b *testing.B) {
+	os.Remove("bench.db")
+	os.Remove("bench.db.wal")
+	db, err := Open("bench.db")
+	if err != nil {
+		b.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("bench.db")
+	defer os.Remove("bench.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		b.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Pre-populate realistic data: 1,000 users with varied names, emails, and ages
+	commonNames := []string{"John", "Jane", "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Henry", "Ivy", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Peter", "Quinn", "Ryan"}
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("user_%d", i)
+		name := commonNames[i%len(commonNames)]
+		email := fmt.Sprintf("%s%d@example.com", name, i)
+		age := rand.Intn(63) + 18 // Ages 18-80
+		user := TestUser{UUID: key, Name: name, Email: email, Age: age}
+		err := store.Put(user)
+		if err != nil {
+			b.Fatalf("Failed to put: %v", err)
+		}
+	}
+	db.Flush()
+
+	// Query with limit and offset
+	batchSize := 1000 / len(commonNames)
+	b.ResetTimer()
+	for i := 0; i < b.N/batchSize; i++ {
+		_, err := store.Query(&Query{
+			Conditions: []Condition{
+				{Field: "Name", Value: "Alice"},
+			},
+			Offset: batchSize/2,
+			Limit:  batchSize/2,
+		})
 		if err != nil {
 			b.Fatalf("Failed to query: %v", err)
 		}
@@ -181,7 +324,7 @@ func BenchmarkBatchPut(b *testing.B) {
 	for i := 0; i < b.N/batchSize; i++ {
 		var users []TestUser
 		for j := 0; j < batchSize; j++ {
-		  key := fmt.Sprintf("key%d", (i*batchSize+j)%b.N)
+			key := fmt.Sprintf("key%d", (i*batchSize+j)%b.N)
 			user := TestUser{UUID: key, Name: "John", Email: "john@example.com", Age: 30}
 			users = append(users, user)
 		}

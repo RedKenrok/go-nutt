@@ -12,7 +12,7 @@ import (
 
 // Config holds configuration options
 type Config struct {
-	WALBufferSize    int
+	WALFlushSize    int
 	WALFlushInterval time.Duration
 	WALPath          string
 }
@@ -48,7 +48,7 @@ type operation struct {
 // Open opens a database with default config
 func Open(path string) (*DB, error) {
 	config := &Config{
-		WALBufferSize:    1000,
+		WALFlushSize:    1024,
 		WALFlushInterval: time.Minute * 15,
 		WALPath:          path + ".wal",
 	}
@@ -67,7 +67,7 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 	d := &DB{
 		DB:               db,
 		config:           config,
-		operationsBuffer: make([]operation, 0, config.WALBufferSize),
+		operationsBuffer: make([]operation, 0, config.WALFlushSize),
 		flushChannel:     make(chan struct{}, 1),
 		closeChannel:     make(chan struct{}),
 	}

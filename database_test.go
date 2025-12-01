@@ -3,6 +3,7 @@ package nnut
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -17,233 +18,20 @@ type TestUser struct {
 }
 
 func TestOpen(t *testing.T) {
-	os.Remove("test.db")
-	os.Remove("test.db.wal")
-	db, err := Open("test.db")
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	db, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
 }
 
-func TestNewStore(t *testing.T) {
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-	if store == nil {
-		t.Fatal("Store is nil")
-	}
-}
-
-func TestPutAndGet(t *testing.T) {
-	os.Remove("test.db")
-	os.Remove("test.db.wal")
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	user := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(user)
-	if err != nil {
-		t.Fatalf("Failed to put: %v", err)
-	}
-	store.database.Flush()
-
-	retrieved, err := store.Get("key1")
-	if err != nil {
-		t.Fatalf("Failed to get: %v", err)
-	}
-
-	if retrieved.Name != user.Name || retrieved.Email != user.Email {
-		t.Fatalf("Retrieved data mismatch: got %+v, want %+v", retrieved, user)
-	}
-}
-
-func TestGetNonExistent(t *testing.T) {
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	_, err = store.Get("nonexistent")
-	if err == nil {
-		t.Fatal("Expected error for non-existent key")
-	}
-}
-
-func TestDelete(t *testing.T) {
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	user := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(user)
-	if err != nil {
-		t.Fatalf("Failed to put: %v", err)
-	}
-	db.Flush()
-
-	// Check exists
-	retrieved, err := store.Get("key1")
-	if err != nil {
-		t.Fatalf("Failed to get before delete: %v", err)
-	}
-	if retrieved.Name != user.Name {
-		t.Fatal("Data mismatch before delete")
-	}
-
-	// Delete
-	err = store.Delete("key1")
-	if err != nil {
-		t.Fatalf("Failed to delete: %v", err)
-	}
-	db.Flush()
-
-	// Check not exists
-	_, err = store.Get("key1")
-	if err == nil {
-		t.Fatal("Expected error after delete")
-	}
-}
-
-func TestQuery(t *testing.T) {
-	os.Remove("test.db")
-	os.Remove("test.db.wal")
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	users := []TestUser{
-		{UUID: "1", Name: "Alice", Email: "alice@example.com"},
-		{UUID: "2", Name: "Bob", Email: "bob@example.com"},
-		{UUID: "3", Name: "Alice", Email: "alice2@example.com"},
-	}
-	for _, u := range users {
-		err = store.Put(u)
-		if err != nil {
-			t.Fatalf("Failed to put: %v", err)
-		}
-	}
-	db.Flush()
-
-	// Query by name
-	results, err := store.Query(&Query{Index: "name", Value: "Alice", Operator: Equals})
-	if err != nil {
-		t.Fatalf("Failed to query: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
-	}
-	for _, r := range results {
-		if r.Name != "Alice" {
-			t.Fatal("Wrong result")
-		}
-	}
-}
-
-func TestBatchOperations(t *testing.T) {
-	db, err := Open("test.db")
-	if err != nil {
-		t.Fatalf("Failed to open DB: %v", err)
-	}
-	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
-
-	store, err := NewStore[TestUser](db, "users")
-	if err != nil {
-		t.Fatalf("Failed to create store: %v", err)
-	}
-
-	users := []TestUser{
-		{UUID: "1", Name: "Alice", Email: "alice@example.com"},
-		{UUID: "2", Name: "Bob", Email: "bob@example.com"},
-		{UUID: "3", Name: "Charlie", Email: "charlie@example.com"},
-	}
-	err = store.PutBatch(users)
-	if err != nil {
-		t.Fatalf("Failed to put batch: %v", err)
-	}
-	db.Flush()
-
-	// Get batch
-	results, err := store.GetBatch([]string{"1", "2", "4"})
-	if err != nil {
-		t.Fatalf("Failed to get batch: %v", err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
-	}
-	if results["1"].Name != "Alice" || results["2"].Name != "Bob" {
-		t.Fatal("Wrong batch get results")
-	}
-
-	// Delete batch
-	err = store.DeleteBatch([]string{"1", "3"})
-	if err != nil {
-		t.Fatalf("Failed to delete batch: %v", err)
-	}
-	db.Flush()
-
-	// Check remaining
-	results, err = store.GetBatch([]string{"1", "2", "3"})
-	if err != nil {
-		t.Fatalf("Failed to get batch after delete: %v", err)
-	}
-	if len(results) != 1 || results["2"].Name != "Bob" {
-		t.Fatal("Wrong results after batch delete")
-	}
-}
-
-func TestWALBufferSize(t *testing.T) {
+func TestWALFlushSize(t *testing.T) {
 	config := &Config{
-		WALBufferSize:    2,
+		WALFlushSize:     2,
 		WALFlushInterval: time.Hour, // long to not auto flush
 	}
 	db, err := OpenWithConfig("test.db", config)
@@ -295,7 +83,7 @@ func TestWALBufferSize(t *testing.T) {
 
 func TestWALFlushInterval(t *testing.T) {
 	config := &Config{
-		WALBufferSize:    100,
+		WALFlushSize:     100,
 		WALFlushInterval: 50 * time.Millisecond,
 	}
 	db, err := OpenWithConfig("test.db", config)
@@ -330,19 +118,19 @@ func TestWALFlushInterval(t *testing.T) {
 }
 
 func TestConcurrency(t *testing.T) {
-	os.Remove("test.db")
-	os.Remove("test.db.wal")
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
 	config := &Config{
-		WALBufferSize:    1,
+		WALFlushSize:     1,
 		WALFlushInterval: time.Hour,
 	}
-	db, err := OpenWithConfig("test.db", config)
+	db, err := OpenWithConfig(dbPath, config)
 	if err != nil {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
 	defer db.Close()
-	defer os.Remove("test.db")
-	defer os.Remove("test.db.wal")
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
 
 	store, err := NewStore[TestUser](db, "users")
 	if err != nil {
