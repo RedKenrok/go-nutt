@@ -16,53 +16,53 @@ type Store[T any] struct {
 }
 
 // NewStore creates a new store for type T with the given bucket name
-func NewStore[T any](db *DB, bucketName string) (*Store[T], error) {
-	// Use reflection to find the key field
-	var zero T
-	typ := reflect.TypeOf(zero)
-	if typ.Kind() != reflect.Struct {
+func NewStore[T any](database *DB, bucketName string) (*Store[T], error) {
+	// Inspect struct fields at runtime to identify key and index fields for dynamic storage
+	var zeroValue T
+	typeOfStruct := reflect.TypeOf(zeroValue)
+	if typeOfStruct.Kind() != reflect.Struct {
 		return nil, errors.New("type must be a struct")
 	}
-	keyField := -1
+	keyFieldIndex := -1
 	indexFields := make(map[string]int)
 	fieldMap := make(map[string]int)
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		fieldMap[field.Name] = i
-		tag := field.Tag.Get("nnut")
-		if tag == "key" {
+	for fieldIndex := 0; fieldIndex < typeOfStruct.NumField(); fieldIndex++ {
+		field := typeOfStruct.Field(fieldIndex)
+		fieldMap[field.Name] = fieldIndex
+		tagValue := field.Tag.Get("nnut")
+		if tagValue == "key" {
 			if field.Type.Kind() != reflect.String {
 				return nil, errors.New("key field must be string")
 			}
-			keyField = i
-		} else if strings.HasPrefix(tag, "index:") {
-			parts := strings.Split(tag, ":")
+			keyFieldIndex = fieldIndex
+		} else if strings.HasPrefix(tagValue, "index:") {
+			parts := strings.Split(tagValue, ":")
 			if len(parts) == 2 {
 				indexName := parts[1]
-				indexFields[indexName] = i
+				indexFields[indexName] = fieldIndex
 			}
 		}
 	}
-	if keyField == -1 {
+	if keyFieldIndex == -1 {
 		return nil, errors.New("no field tagged with nnut:\"key\"")
 	}
 	return &Store[T]{
-		database:    db,
+		database:    database,
 		bucket:      []byte(bucketName),
-		keyField:    keyField,
+		keyField:    keyFieldIndex,
 		indexFields: indexFields,
 		fieldMap:    fieldMap,
 	}, nil
 }
 
-// extractIndexValues extracts index field values from the struct
+// Gather index field values to maintain secondary index consistency
 func (s *Store[T]) extractIndexValues(value T) map[string]string {
-	v := reflect.ValueOf(value)
+	structValue := reflect.ValueOf(value)
 	result := make(map[string]string)
-	for name, idx := range s.indexFields {
-		fieldVal := v.Field(idx)
-		if fieldVal.Kind() == reflect.String {
-			result[name] = fieldVal.String()
+	for indexName, fieldIndex := range s.indexFields {
+		fieldValue := structValue.Field(fieldIndex)
+		if fieldValue.Kind() == reflect.String {
+			result[indexName] = fieldValue.String()
 		}
 	}
 	return result

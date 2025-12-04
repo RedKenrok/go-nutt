@@ -30,9 +30,9 @@ func BenchmarkQuery(b *testing.B) {
 		b.Fatalf("Failed to create store: %v", err)
 	}
 
-	// Query for a common name, simulating real searches
+	// Test typical query patterns
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for iteration := 0; iteration < b.N; iteration++ {
 		_, err := store.Query(&Query{
 			Conditions: []Condition{
 				{Field: "Name", Value: "Alice"},

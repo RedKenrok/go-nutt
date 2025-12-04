@@ -23,21 +23,21 @@ func TestQuery(t *testing.T) {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 
-	users := []TestUser{
+	testUsers := []TestUser{
 		{UUID: "1", Name: "Alice", Email: "alice@example.com", Age: 30},
 		{UUID: "2", Name: "Bob", Email: "bob@example.com", Age: 25},
 		{UUID: "3", Name: "Alice", Email: "alice2@example.com", Age: 35},
 	}
-	for _, u := range users {
-		err = store.Put(u)
+	for _, user := range testUsers {
+		err = store.Put(user)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
 	}
 	db.Flush()
 
-	// Query by name
-	results, err := store.Query(&Query{
+	// Test filtering by indexed field
+	retrievedResults, err := store.Query(&Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
 		},
@@ -45,11 +45,11 @@ func TestQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to query: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
+	if len(retrievedResults) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(retrievedResults))
 	}
-	for _, r := range results {
-		if r.Name != "Alice" {
+	for _, result := range retrievedResults {
+		if result.Name != "Alice" {
 			t.Fatal("Wrong result")
 		}
 	}
@@ -85,7 +85,7 @@ func TestQueryMultipleConditions(t *testing.T) {
 	}
 	db.Flush()
 
-	// Query with multiple conditions: Name == "Alice" AND Age > 30
+	// Test combining indexed and non-indexed conditions
 	results, err := store.Query(&Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
@@ -132,7 +132,7 @@ func TestQuerySorting(t *testing.T) {
 	}
 	db.Flush()
 
-	// Query sorted by name ascending
+	// Test ordering results using index
 	results, err := store.Query(&Query{
 		Index: "name",
 		Sort:  Ascending,
@@ -190,7 +190,7 @@ func TestQueryLimitOffset(t *testing.T) {
 	}
 	db.Flush()
 
-	// Query with limit
+	// Test pagination with limit
 	results, err := store.Query(&Query{
 		Index: "name",
 		Sort:  Ascending,
@@ -255,7 +255,7 @@ func TestQueryOperators(t *testing.T) {
 	db.Flush()
 
 	// Test GreaterThan on Age
-	results, err := store.Query(&Query{
+	retrievedResults, err := store.Query(&Query{
 		Conditions: []Condition{
 			{Field: "Age", Value: 30, Operator: GreaterThan},
 		},
@@ -263,17 +263,17 @@ func TestQueryOperators(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to query: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
+	if len(retrievedResults) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(retrievedResults))
 	}
 	// Should be Charlie (40) and David (35)
-	ages := []int{results[0].Age, results[1].Age}
-	if !((ages[0] == 35 && ages[1] == 40) || (ages[0] == 40 && ages[1] == 35)) {
+	retrievedAges := []int{retrievedResults[0].Age, retrievedResults[1].Age}
+	if !((retrievedAges[0] == 35 && retrievedAges[1] == 40) || (retrievedAges[0] == 40 && retrievedAges[1] == 35)) {
 		t.Fatal("Wrong results for GreaterThan")
 	}
 
 	// Test LessThanOrEqual on Name
-	results, err = store.Query(&Query{
+	retrievedResults, err = store.Query(&Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Bob", Operator: LessThanOrEqual},
 		},
@@ -281,8 +281,8 @@ func TestQueryOperators(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to query: %v", err)
 	}
-	if len(results) != 2 {
-		t.Fatalf("Expected 2 results, got %d", len(results))
+	if len(retrievedResults) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(retrievedResults))
 	}
 	// Alice and Bob
 }

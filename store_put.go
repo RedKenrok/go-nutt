@@ -8,36 +8,36 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// Put stores a value
+// Persist a single record with index updates
 func (s *Store[T]) Put(value T) error {
-	// Extract key from value using reflection
-	v := reflect.ValueOf(value)
-	key := v.Field(s.keyField).String()
+	// Retrieve the primary key via runtime type inspection
+	valueReflection := reflect.ValueOf(value)
+	key := valueReflection.Field(s.keyField).String()
 	if key == "" {
 		return errors.New("key field is empty")
 	}
 
-	// Read old value if exists to get old index values
+	// Fetch existing record to handle index changes
 	var oldIndexValues map[string]string
-	old, err := s.Get(key)
+	oldValue, err := s.Get(key)
 	if err == nil {
-		oldIndexValues = s.extractIndexValues(old)
+		oldIndexValues = s.extractIndexValues(oldValue)
 	} else {
 		oldIndexValues = make(map[string]string)
 	}
 
 	newIndexValues := s.extractIndexValues(value)
 
-	// Create index ops
-	var indexOps []indexOperation
+	// Prepare index maintenance operations
+	var indexOperations []indexOperation
 	for name := range s.indexFields {
-		oldVal := oldIndexValues[name]
-		newVal := newIndexValues[name]
-		if oldVal != newVal {
-			indexOps = append(indexOps, indexOperation{
+		oldValue := oldIndexValues[name]
+		newValue := newIndexValues[name]
+		if oldValue != newValue {
+			indexOperations = append(indexOperations, indexOperation{
 				IndexName: name,
-				OldValue:  oldVal,
-				NewValue:  newVal,
+				OldValue:  oldValue,
+				NewValue:  newValue,
 			})
 		}
 	}
@@ -47,31 +47,31 @@ func (s *Store[T]) Put(value T) error {
 		return err
 	}
 
-	op := operation{
+	operation := operation{
 		Bucket:          s.bucket,
 		Key:             key,
 		Value:           data,
 		IsPut:           true,
-		IndexOperations: indexOps,
+		IndexOperations: indexOperations,
 	}
 
-	// Write to WAL file
+	// Log the operation for crash recovery
 	s.database.walMutex.Lock()
-	var walBuf bytes.Buffer
-	walEnc := msgpack.NewEncoder(&walBuf)
-	err = walEnc.Encode(op)
+	var walBuffer bytes.Buffer
+	walEncoder := msgpack.NewEncoder(&walBuffer)
+	err = walEncoder.Encode(operation)
 	if err != nil {
 		s.database.walMutex.Unlock()
 		return err
 	}
-	_, err = s.database.walFile.Write(walBuf.Bytes())
+	_, err = s.database.walFile.Write(walBuffer.Bytes())
 	s.database.walMutex.Unlock()
 	if err != nil {
 		return err
 	}
 
 	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, op)
+	s.database.operationsBuffer = append(s.database.operationsBuffer, operation)
 	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
 	s.database.operationsBufferMutex.Unlock()
 
@@ -81,51 +81,51 @@ func (s *Store[T]) Put(value T) error {
 	return nil
 }
 
-// PutBatch stores multiple values
+// Persist multiple records efficiently
 func (s *Store[T]) PutBatch(values []T) error {
-	// Extract keys
+	// Collect primary keys from all values
 	keys := make([]string, len(values))
 	keyToValue := make(map[string]T)
-	for i, value := range values {
-		v := reflect.ValueOf(value)
-		key := v.Field(s.keyField).String()
+	for index, value := range values {
+		valueReflection := reflect.ValueOf(value)
+		key := valueReflection.Field(s.keyField).String()
 		if key == "" {
 			return errors.New("key field is empty")
 		}
-		keys[i] = key
+		keys[index] = key
 		keyToValue[key] = value
 	}
 
-	// Batch get old values
+	// Retrieve existing records for index updates
 	oldValues, err := s.GetBatch(keys)
 	if err != nil {
 		return err
 	}
 
-	// Prepare operations
-	var ops []operation
+	// Build operations for each record
+	var operations []operation
 	for _, key := range keys {
 		value := keyToValue[key]
-		old, exists := oldValues[key]
+		oldValue, exists := oldValues[key]
 		var oldIndexValues map[string]string
 		if exists {
-			oldIndexValues = s.extractIndexValues(old)
+			oldIndexValues = s.extractIndexValues(oldValue)
 		} else {
 			oldIndexValues = make(map[string]string)
 		}
 
 		newIndexValues := s.extractIndexValues(value)
 
-		// Create index ops
-		var indexOps []indexOperation
+		// Set up index modifications
+		var indexOperations []indexOperation
 		for name := range s.indexFields {
-			oldVal := oldIndexValues[name]
-			newVal := newIndexValues[name]
-			if oldVal != newVal {
-				indexOps = append(indexOps, indexOperation{
+			oldValue := oldIndexValues[name]
+			newValue := newIndexValues[name]
+			if oldValue != newValue {
+				indexOperations = append(indexOperations, indexOperation{
 					IndexName: name,
-					OldValue:  oldVal,
-					NewValue:  newVal,
+					OldValue:  oldValue,
+					NewValue:  newValue,
 				})
 			}
 		}
@@ -133,42 +133,42 @@ func (s *Store[T]) PutBatch(values []T) error {
 		buf := bufferPool.Get().(*bytes.Buffer)
 		defer bufferPool.Put(buf)
 		buf.Reset()
-		enc := msgpack.NewEncoder(buf)
-		err = enc.Encode(value)
+		encoder := msgpack.NewEncoder(buf)
+		err = encoder.Encode(value)
 		if err != nil {
 			return err
 		}
 		data := buf.Bytes()
 
-		op := operation{
+		operation := operation{
 			Bucket:          s.bucket,
 			Key:             key,
 			Value:           data,
 			IsPut:           true,
-			IndexOperations: indexOps,
+			IndexOperations: indexOperations,
 		}
-		ops = append(ops, op)
+		operations = append(operations, operation)
 	}
 
-	// Batch write to WAL
-	var walBuf bytes.Buffer
-	walEnc := msgpack.NewEncoder(&walBuf)
-	for _, op := range ops {
-		err = walEnc.Encode(op)
+	// Write all operations to WAL atomically
+	var walBuffer bytes.Buffer
+	walEncoder := msgpack.NewEncoder(&walBuffer)
+	for _, operation := range operations {
+		err = walEncoder.Encode(operation)
 		if err != nil {
 			return err
 		}
 	}
 	s.database.walMutex.Lock()
-	_, err = s.database.walFile.Write(walBuf.Bytes())
+	_, err = s.database.walFile.Write(walBuffer.Bytes())
 	s.database.walMutex.Unlock()
 	if err != nil {
 		return err
 	}
 
-	// Add to buffer
+	// Queue operations for eventual flush
 	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, ops...)
+	s.database.operationsBuffer = append(s.database.operationsBuffer, operations...)
 	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
 	s.database.operationsBufferMutex.Unlock()
 

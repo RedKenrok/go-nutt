@@ -43,15 +43,15 @@ func TestSetupBenchmarkDB(t *testing.T) {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 
-	// Pre-populate users with varied names, emails, and ages
+	// Create diverse test data for realistic benchmarking
 	commonNames := []string{"John", "Jane", "Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Henry", "Ivy", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Peter", "Quinn", "Ryan"}
-	for i := 0; i < userCount; i++ {
-		key := fmt.Sprintf("user_%d", i)
-		name := commonNames[i%len(commonNames)]
-		email := fmt.Sprintf("%s%d@example.com", name, i)
+	for index := 0; index < userCount; index++ {
+		key := fmt.Sprintf("user_%d", index)
+		name := commonNames[index%len(commonNames)]
+		email := fmt.Sprintf("%s%d@example.com", name, index)
 		age := rand.Intn(63) + 18 // Ages 18-80
-		user := TestUser{UUID: key, Name: name, Email: email, Age: age}
-		err := store.Put(user)
+		testUser := TestUser{UUID: key, Name: name, Email: email, Age: age}
+		err := store.Put(testUser)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -84,8 +84,8 @@ func BenchmarkGet(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		key := fmt.Sprintf("user_%d", i%userCount)
+	for iteration := 0; iteration < b.N; iteration++ {
+		key := fmt.Sprintf("user_%d", iteration%userCount)
 		_, err := store.Get(key)
 		if err != nil {
 			b.Fatalf("Failed to get: %v", err)
@@ -115,13 +115,13 @@ func BenchmarkBatchGet(b *testing.B) {
 		b.Fatalf("Failed to create store: %v", err)
 	}
 
-	// Using a batch size allows us to compare directly with BenchmarkGet
+	// Standardize batch size for fair performance comparison
 	batchSize := 100
 	b.ResetTimer()
-	for i := 0; i < b.N/batchSize; i++ {
+	for batchIndex := 0; batchIndex < b.N/batchSize; batchIndex++ {
 		var keys []string
-		for j := 0; j < batchSize; j++ {
-			keys = append(keys, fmt.Sprintf("user_%d", (i*batchSize+j)%userCount))
+		for keyIndex := 0; keyIndex < batchSize; keyIndex++ {
+			keys = append(keys, fmt.Sprintf("user_%d", (batchIndex*batchSize+keyIndex)%userCount))
 		}
 		_, err := store.GetBatch(keys)
 		if err != nil {

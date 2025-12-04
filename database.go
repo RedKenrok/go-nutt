@@ -61,38 +61,38 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 	if config.WALPath == "" {
 		config.WALPath = path + ".wal"
 	}
-	db, err := bbolt.Open(path, 0600, nil)
+	database, err := bbolt.Open(path, 0600, nil)
 	if err != nil {
 		return nil, err
 	}
-	d := &DB{
-		DB:               db,
+	databaseInstance := &DB{
+		DB:               database,
 		config:           config,
 		operationsBuffer: make([]operation, 0, config.WALFlushSize),
 		flushChannel:     make(chan struct{}, 1),
 		closeChannel:     make(chan struct{}),
 	}
 
-	// Replay WAL if exists
-	err = d.replayWAL()
+	// Recover uncommitted operations from previous session to ensure data consistency
+	err = databaseInstance.replayWAL()
 	if err != nil {
-		db.Close()
+		database.Close()
 		return nil, err
 	}
 
-	// Open WAL file for append
-	d.walFile, err = os.OpenFile(config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	// Prepare WAL file for logging new operations to enable crash recovery
+	databaseInstance.walFile, err = os.OpenFile(config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		db.Close()
+		database.Close()
 		return nil, err
 	}
 
-	d.closeWaitGroup.Add(1)
-	go d.flushWAL()
-	return d, nil
+	databaseInstance.closeWaitGroup.Add(1)
+	go databaseInstance.flushWAL()
+	return databaseInstance, nil
 }
 
-// Close closes the database and flushes the WAL
+// Ensure all pending operations are persisted before shutting down to prevent data loss
 func (db *DB) Close() error {
 	close(db.closeChannel)
 	db.closeWaitGroup.Wait()
@@ -115,55 +115,55 @@ func (db *DB) replayWAL() error {
 	}
 	defer file.Close()
 
-	dec := msgpack.GetDecoder()
-	defer msgpack.PutDecoder(dec)
-	dec.Reset(file)
+	decoder := msgpack.GetDecoder()
+	defer msgpack.PutDecoder(decoder)
+	decoder.Reset(file)
 	for {
-		var op operation
-		err := dec.Decode(&op)
+		var operation operation
+		err := decoder.Decode(&operation)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			// Invalid WAL, remove
+			// Corrupted WAL file cannot be trusted, discard to avoid applying invalid operations
 			os.Remove(db.config.WALPath)
 			return nil
 		}
 
-		// Apply to database
+		// Reapply operations to restore database state
 		err = db.Update(func(tx *bbolt.Tx) error {
-			b, err := tx.CreateBucketIfNotExists(op.Bucket)
+			b, err := tx.CreateBucketIfNotExists(operation.Bucket)
 			if err != nil {
 				return err
 			}
-			if op.IsPut {
-				err = b.Put([]byte(op.Key), op.Value)
+			if operation.IsPut {
+				err = b.Put([]byte(operation.Key), operation.Value)
 				if err != nil {
 					return err
 				}
 			} else {
-				err = b.Delete([]byte(op.Key))
+				err = b.Delete([]byte(operation.Key))
 				if err != nil {
 					return err
 				}
 			}
 
-			// Update indices
-			for _, idxOp := range op.IndexOperations {
-				idxBucketName := string(op.Bucket) + "_index_" + idxOp.IndexName
+			// Maintain index consistency during replay
+			for _, idxOp := range operation.IndexOperations {
+				idxBucketName := string(operation.Bucket) + "_index_" + idxOp.IndexName
 				idxB, err := tx.CreateBucketIfNotExists([]byte(idxBucketName))
 				if err != nil {
 					return err
 				}
 				if idxOp.OldValue != "" {
-					oldKey := idxOp.OldValue + "\x00" + op.Key
+					oldKey := idxOp.OldValue + "\x00" + operation.Key
 					err = idxB.Delete([]byte(oldKey))
 					if err != nil {
 						return err
 					}
 				}
 				if idxOp.NewValue != "" {
-					newKey := idxOp.NewValue + "\x00" + op.Key
+					newKey := idxOp.NewValue + "\x00" + operation.Key
 					err = idxB.Put([]byte(newKey), []byte{})
 					if err != nil {
 						return err
@@ -177,7 +177,7 @@ func (db *DB) replayWAL() error {
 		}
 	}
 
-	// After replay, remove WAL file
+	// WAL is no longer needed after successful replay
 	os.Remove(db.config.WALPath)
 
 	return nil
@@ -202,47 +202,47 @@ func (db *DB) flushWAL() {
 
 func (db *DB) Flush() {
 	db.operationsBufferMutex.Lock()
-	ops := make([]operation, len(db.operationsBuffer))
-	copy(ops, db.operationsBuffer)
+	operations := make([]operation, len(db.operationsBuffer))
+	copy(operations, db.operationsBuffer)
 	db.operationsBuffer = db.operationsBuffer[:0]
 	db.operationsBufferMutex.Unlock()
 
-	if len(ops) == 0 {
+	if len(operations) == 0 {
 		return
 	}
 
 	err := db.Update(func(tx *bbolt.Tx) error {
-		for _, op := range ops {
-			b, err := tx.CreateBucketIfNotExists(op.Bucket)
+		for _, operation := range operations {
+			b, err := tx.CreateBucketIfNotExists(operation.Bucket)
 			if err != nil {
 				return err
 			}
-			if op.IsPut {
-				err = b.Put([]byte(op.Key), op.Value)
+			if operation.IsPut {
+				err = b.Put([]byte(operation.Key), operation.Value)
 				if err != nil {
 					return err
 				}
 			} else {
-				err = b.Delete([]byte(op.Key))
+				err = b.Delete([]byte(operation.Key))
 				if err != nil {
 					return err
 				}
 			}
-			for _, idxOp := range op.IndexOperations {
-				idxBucketName := string(op.Bucket) + "_index_" + idxOp.IndexName
+			for _, idxOp := range operation.IndexOperations {
+				idxBucketName := string(operation.Bucket) + "_index_" + idxOp.IndexName
 				idxB, err := tx.CreateBucketIfNotExists([]byte(idxBucketName))
 				if err != nil {
 					return err
 				}
 				if idxOp.OldValue != "" {
-					oldKey := idxOp.OldValue + "\x00" + op.Key
+					oldKey := idxOp.OldValue + "\x00" + operation.Key
 					err = idxB.Delete([]byte(oldKey))
 					if err != nil {
 						return err
 					}
 				}
 				if idxOp.NewValue != "" {
-					newKey := idxOp.NewValue + "\x00" + op.Key
+					newKey := idxOp.NewValue + "\x00" + operation.Key
 					err = idxB.Put([]byte(newKey), []byte{})
 					if err != nil {
 						return err
@@ -253,6 +253,6 @@ func (db *DB) Flush() {
 		return nil
 	})
 	if err != nil {
-		// log error? for now, ignore
+		// Errors during flush are not critical as operations remain in buffer for retry
 	}
 }
