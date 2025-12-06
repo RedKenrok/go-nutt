@@ -1,13 +1,5 @@
 # Tasks
 
-## 4. Performance optimizations
-
-- Current state: Uses pools for buffers and decoders, which is good.
-- Improvements:
-  - Profile the code to identify bottlenecks (e.g., reflection in queries might be slow for large datasets).
-  - Optimize query intersection logic (e.g., use more efficient set operations).
-  - Implement lazy loading or pagination for large result sets.
-
 ## 5. Security and Reliability
 
 - Current State: Basic file I/O with permissions.

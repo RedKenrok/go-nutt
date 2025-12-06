@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"time"
 )
 
 // copyFile copies a file from src to dst
@@ -266,7 +267,7 @@ func BenchmarkBatchDelete(b *testing.B) {
 
 // BenchmarkHighLoadConcurrent simulates high concurrent load with mixed operations
 func BenchmarkHighLoadConcurrent(b *testing.B) {
-  // Copy template database
+	// Copy template database
 	os.Remove("benchmark.db")
 	os.Remove("benchmark.db.wal")
 	err := copyFile("benchmark_template.db", "benchmark.db")
@@ -311,4 +312,45 @@ func BenchmarkHighLoadConcurrent(b *testing.B) {
 		}
 	})
 	db.Flush()
+}
+
+// BenchmarkWALTruncation measures the performance of WAL truncation after flush
+func BenchmarkWALTruncation(b *testing.B) {
+	// Copy template database
+	os.Remove("benchmark.db")
+	os.Remove("benchmark.db.wal")
+	err := copyFile("benchmark_template.db", "benchmark.db")
+	if err != nil {
+		b.Fatalf("Failed to copy template DB: %v", err)
+	}
+
+	config := &Config{
+		WALFlushSize:     1024,
+		WALFlushInterval: time.Hour, // Prevent auto-flush
+		MaxBufferBytes:   100000,    // Large buffer
+	}
+	db, err := OpenWithConfig("benchmark.db", config)
+	if err != nil {
+		b.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("benchmark.db")
+	defer os.Remove("benchmark.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		b.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add some operations to buffer
+	for i := 0; i < 100; i++ {
+		user := TestUser{UUID: fmt.Sprintf("trunc_%d", i), Name: "Trunc", Email: "trunc@example.com", Age: i}
+		store.Put(context.Background(), user)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Flush and truncate
+		db.Flush()
+	}
 }

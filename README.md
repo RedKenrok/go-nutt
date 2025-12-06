@@ -262,29 +262,32 @@ The salt value is also automatically filled in if left empty and it needs to be 
 ## Benchmarks
 
 ```
-~ go test -bench=Benchmark -benchtime=5s
+~ go test -bench=. -benchtime=5s -benchmem
+2025/12/06 14:56:47 Error reading WAL for truncation: open test.db.wal: no such file or directory
+2025/12/06 14:56:47 Error reading WAL for truncation: open test.db.wal: no such file or directory
 goos: darwin
 goarch: amd64
 pkg: github.com/redkenrok/go-nnut
 cpu: Intel(R) Core(TM) i5-1038NG7 CPU @ 2.00GHz
-BenchmarkGet-8                       	 2973112	      2038 ns/op
-BenchmarkBatchGet-8                  	 4081006	      1480 ns/op
-BenchmarkPut-8                       	  185354	     53785 ns/op
-BenchmarkBatchPut-8                  	  192571	     51723 ns/op
-BenchmarkDelete-8                    	  958870	      5994 ns/op
-BenchmarkBatchDelete-8               	 2545876	      2341 ns/op
-BenchmarkQuery-8                     	    3933	   1464660 ns/op
-BenchmarkQueryMultipleConditions-8   	    3242	   1807391 ns/op
-BenchmarkQuerySorting-8              	   46839	    128637 ns/op
-BenchmarkQueryLimitOffset-8          	    4214	   1406389 ns/op
-BenchmarkQueryCount-8                	     868	   6892744 ns/op
-BenchmarkQueryCountIndex-8           	   52657	    113999 ns/op
-BenchmarkQueryNoConditions-8         	   50565	    118505 ns/op
-BenchmarkQueryNonIndexedField-8      	   30990	    196279 ns/op
-BenchmarkQueryComplexOperators-8     	   10000	    505164 ns/op
-BenchmarkQueryLargeLimit-8           	     789	   7586008 ns/op
-BenchmarkQueryOffsetOnly-8           	     795	   7535773 ns/op
-BenchmarkQuerySortingAscending-8     	   47625	    126615 ns/op
-BenchmarkQueryCountNoConditions-8    	   42862	    140445 ns/op
-BenchmarkQueryCountNonIndexed-8      	     848	   7085303 ns/op
+BenchmarkGet-8                       	 2954486	      2040 ns/op	     836 B/op	      26 allocs/op
+BenchmarkBatchGet-8                  	 4056624	      1488 ns/op	     644 B/op	      17 allocs/op
+BenchmarkPut-8                       	  164708	     53121 ns/op	    5920 B/op	      92 allocs/op
+BenchmarkBatchPut-8                  	  191046	     46756 ns/op	    6915 B/op	      86 allocs/op
+BenchmarkDelete-8                    	  752538	      9482 ns/op	     926 B/op	      16 allocs/op
+BenchmarkBatchDelete-8               	 1849153	      3206 ns/op	    1507 B/op	      15 allocs/op
+BenchmarkHighLoadConcurrent-8        	  242562	    105732 ns/op	   71889 B/op	    2062 allocs/op
+BenchmarkQuery-8                     	    3787	   1503364 ns/op	  483689 B/op	   13311 allocs/op
+BenchmarkQueryMultipleConditions-8   	    3289	   1810355 ns/op	  587773 B/op	   16104 allocs/op
+BenchmarkQuerySorting-8              	   46336	    130587 ns/op	   67681 B/op	    1946 allocs/op
+BenchmarkQueryLimitOffset-8          	    4020	   1444309 ns/op	  457090 B/op	   12610 allocs/op
+BenchmarkQueryCount-8                	     849	   6951439 ns/op	 2193283 B/op	   61035 allocs/op
+BenchmarkQueryCountIndex-8           	   47655	    125754 ns/op	    4272 B/op	     471 allocs/op
+BenchmarkQueryNoConditions-8         	   48792	    121247 ns/op	   59774 B/op	    1540 allocs/op
+BenchmarkQueryNonIndexedField-8      	   30085	    200495 ns/op	   85631 B/op	    2256 allocs/op
+BenchmarkQueryComplexOperators-8     	   10000	    519348 ns/op	  207675 B/op	    5232 allocs/op
+BenchmarkQueryLargeLimit-8           	     776	   7707258 ns/op	 2448874 B/op	   68639 allocs/op
+BenchmarkQueryOffsetOnly-8           	     788	   7615560 ns/op	 2430471 B/op	   67939 allocs/op
+BenchmarkQuerySortingAscending-8     	   46822	    128125 ns/op	   64625 B/op	    1646 allocs/op
+BenchmarkQueryCountNoConditions-8    	   44370	    135773 ns/op	    4680 B/op	     522 allocs/op
+BenchmarkQueryCountNonIndexed-8      	     864	   6990600 ns/op	 2790105 B/op	   69244 allocs/op
 ```

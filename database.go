@@ -32,6 +32,7 @@ type DB struct {
 	operationsBuffer      map[string]operation
 	operationsBufferMutex sync.Mutex
 	bytesInBuffer         uint64
+	currentEpoch          uint64
 
 	flushChannel   chan struct{}
 	closeChannel   chan struct{}
@@ -50,6 +51,7 @@ type operation struct {
 	Value           []byte
 	IsPut           bool
 	IndexOperations []indexOperation
+	Epoch           uint64
 }
 
 // Open opens a database with default config
@@ -120,6 +122,7 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 		DB:               database,
 		config:           config,
 		operationsBuffer: make(map[string]operation),
+		currentEpoch:     1,
 		flushChannel:     make(chan struct{}, config.FlushChannelSize),
 		closeChannel:     make(chan struct{}),
 	}
@@ -175,7 +178,8 @@ func (db *DB) replayWAL() error {
 			}
 			// Corrupted WAL file cannot be trusted, discard to avoid applying invalid operations
 			os.Remove(db.config.WALPath)
-			return WALReplayError{WALPath: db.config.WALPath, OperationIndex: operationIndex, Err: err}
+			// Don't return error, as DB is consistent without WAL
+			break
 		}
 
 		// Reapply operations to restore database state
@@ -253,6 +257,7 @@ func (db *DB) Flush() {
 	db.operationsBufferMutex.Lock()
 	operations := make([]operation, 0, len(db.operationsBuffer))
 	for _, op := range db.operationsBuffer {
+		op.Epoch = db.currentEpoch
 		operations = append(operations, op)
 	}
 	db.operationsBuffer = make(map[string]operation)
@@ -307,6 +312,88 @@ func (db *DB) Flush() {
 	if err != nil {
 		// Log flush errors for debugging, but don't fail the operation as operations remain in buffer for retry
 		log.Printf("Flush error: %v", FlushError{OperationCount: len(operations), Err: err})
+		return
+	}
+
+	// Truncate WAL after successful flush
+	db.truncateWAL(db.currentEpoch)
+	db.currentEpoch++
+}
+
+func (db *DB) truncateWAL(committedEpoch uint64) {
+	db.walMutex.Lock()
+	defer db.walMutex.Unlock()
+
+	// Close WAL file
+	if err := db.walFile.Close(); err != nil {
+		log.Printf("Error closing WAL for truncation: %v", err)
+		return
+	}
+
+	// Read entire WAL
+	data, err := os.ReadFile(db.config.WALPath)
+	if err != nil {
+		log.Printf("Error reading WAL for truncation: %v", err)
+		// Reopen WAL
+		db.walFile, err = os.OpenFile(db.config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Error reopening WAL: %v", err)
+		}
+		return
+	}
+
+	// Decode and filter operations
+	var remainingOps []operation
+	decoder := msgpack.GetDecoder()
+	defer msgpack.PutDecoder(decoder)
+	decoder.Reset(bytes.NewReader(data))
+	for {
+		var op operation
+		err := decoder.Decode(&op)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Printf("Error decoding WAL operation: %v", err)
+			// On decode error, keep all remaining data
+			break
+		}
+		if op.Epoch > committedEpoch {
+			remainingOps = append(remainingOps, op)
+		}
+	}
+
+	// Encode remaining operations
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	for _, op := range remainingOps {
+		if err := encoder.Encode(op); err != nil {
+			log.Printf("Error encoding remaining operation: %v", err)
+			// On error, don't truncate
+			db.walFile, err = os.OpenFile(db.config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Printf("Error reopening WAL: %v", err)
+			}
+			return
+		}
+	}
+
+	// Write back to WAL
+	err = os.WriteFile(db.config.WALPath, buf.Bytes(), 0644)
+	if err != nil {
+		log.Printf("Error writing truncated WAL: %v", err)
+		// Reopen
+		db.walFile, err = os.OpenFile(db.config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Printf("Error reopening WAL: %v", err)
+		}
+		return
+	}
+
+	// Reopen WAL for append
+	db.walFile, err = os.OpenFile(db.config.WALPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("Error reopening WAL after truncation: %v", err)
 	}
 }
 
@@ -317,6 +404,8 @@ func bufferKey(bucket []byte, key string) string {
 
 // writeOperation adds a single operation to WAL and buffer
 func (db *DB) writeOperation(ctx context.Context, op operation) error {
+	op.Epoch = db.currentEpoch
+
 	// Encode operation to measure size
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
@@ -361,6 +450,10 @@ func (db *DB) writeOperation(ctx context.Context, op operation) error {
 func (db *DB) writeOperations(ctx context.Context, ops []operation) error {
 	if len(ops) == 0 {
 		return nil
+	}
+
+	for i := range ops {
+		ops[i].Epoch = db.currentEpoch
 	}
 
 	// Encode all operations

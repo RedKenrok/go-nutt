@@ -153,7 +153,7 @@ func TestWALRecoveryAfterSimulatedCrash(t *testing.T) {
 	config := &Config{
 		WALFlushSize:     1000, // Delay flush
 		WALFlushInterval: time.Hour,
-		MaxBufferBytes:   10000,
+		MaxBufferBytes:   1000000, // Large buffer to prevent flush during puts
 	}
 	db, err := OpenWithConfig(dbPath, config)
 	if err != nil {
@@ -253,5 +253,112 @@ func TestWALCorruptionHandling(t *testing.T) {
 	}
 	if retrieved.Name != "Test" {
 		t.Fatal("Data lost after WAL corruption")
+	}
+}
+
+func TestWALTruncation(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	config := &Config{
+		WALFlushSize:     1024,
+		WALFlushInterval: time.Hour, // Prevent auto-flush
+		MaxBufferBytes:   100000,    // Large buffer to prevent auto-flush
+	}
+	db, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add initial data
+	for i := 0; i < 10; i++ {
+		user := TestUser{UUID: fmt.Sprintf("user%d", i), Name: "TruncationTest", Email: "trunc@example.com", Age: i}
+		store.Put(context.Background(), user)
+	}
+
+	// Check WAL has content
+	walPath := dbPath + ".wal"
+	stat, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("WAL file should exist: %v", err)
+	}
+	initialSize := stat.Size()
+	if initialSize == 0 {
+		t.Fatal("WAL should have content before flush")
+	}
+
+	// Flush manually
+	db.Flush()
+
+	// Wait for truncation
+	time.Sleep(100 * time.Millisecond)
+
+	// WAL should be truncated (empty, since all committed)
+	stat, err = os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("WAL file should exist: %v", err)
+	}
+	if stat.Size() != 0 {
+		t.Fatal("WAL should be empty after flush of all operations")
+	}
+
+	// Add more data
+	for i := 10; i < 15; i++ {
+		user := TestUser{UUID: fmt.Sprintf("user%d", i), Name: "TruncationTest", Email: "trunc@example.com", Age: i}
+		store.Put(context.Background(), user)
+	}
+
+	// WAL should have content again
+	stat, err = os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("WAL file should exist: %v", err)
+	}
+	if stat.Size() == 0 {
+		t.Fatal("WAL should have content after new operations")
+	}
+
+	// Flush again
+	db.Flush()
+
+	// Wait
+	time.Sleep(100 * time.Millisecond)
+
+	// WAL should be empty again
+	stat, err = os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("WAL file should exist: %v", err)
+	}
+	if stat.Size() != 0 {
+		t.Fatal("WAL should be empty after second flush")
+	}
+
+	// Close and reopen to test recovery
+	db.Close()
+	db2, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to reopen DB: %v", err)
+	}
+	defer db2.Close()
+
+	store2, err := NewStore[TestUser](db2, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store after reopen: %v", err)
+	}
+
+	// All data should be present
+	for i := 0; i < 15; i++ {
+		retrieved, err := store2.Get(context.Background(), fmt.Sprintf("user%d", i))
+		if err != nil {
+			t.Fatalf("Failed to get user%d: %v", i, err)
+		}
+		if retrieved.Name != "TruncationTest" {
+			t.Fatalf("Data incorrect for user%d", i)
+		}
 	}
 }
