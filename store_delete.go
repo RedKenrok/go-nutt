@@ -1,10 +1,15 @@
 package nnut
 
+import "context"
+
 // Delete removes a value by key
-func (s *Store[T]) Delete(key string) error {
+func (s *Store[T]) Delete(ctx context.Context, key string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
 	// Retrieve existing value to update indexes correctly
 	var oldIndexValues map[string]string
-	oldValue, err := s.Get(key)
+	oldValue, err := s.Get(ctx, key)
 	if err == nil {
 		oldIndexValues = s.extractIndexValues(oldValue)
 	} else {
@@ -32,13 +37,13 @@ func (s *Store[T]) Delete(key string) error {
 		IndexOperations: indexOperations,
 	}
 
-	return s.database.writeOperation(operation)
+	return s.database.writeOperation(ctx, operation)
 }
 
 // DeleteBatch removes multiple values by keys
-func (s *Store[T]) DeleteBatch(keys []string) error {
+func (s *Store[T]) DeleteBatch(ctx context.Context, keys []string) error {
 	// Fetch current values to handle index updates in batch
-	oldValues, err := s.GetBatch(keys)
+	oldValues, err := s.GetBatch(ctx, keys)
 	if err != nil {
 		return WrappedError{Operation: "get_batch", Bucket: string(s.bucket), Err: err}
 	}
@@ -77,5 +82,5 @@ func (s *Store[T]) DeleteBatch(keys []string) error {
 		operations = append(operations, operation)
 	}
 
-	return s.database.writeOperations(operations)
+	return s.database.writeOperations(ctx, operations)
 }

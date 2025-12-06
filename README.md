@@ -1,6 +1,6 @@
 # nnut
 
-> Still very much a work in progress.
+> Still very much a work in progress, the documentation is severely outdated.
 
 A Go library that wraps [go.etcd.io/bbolt](https://github.com/etcd-io/bbolt/#readme) to provide enhanced embedded key-value storage capabilities. It adds a Write Ahead Log (WAL) to reduce write frequency and implements automatic encoding using [msgpack](github.com/vmihailenco/msgpack/#readme) and indexing.
 
@@ -267,24 +267,24 @@ goos: darwin
 goarch: amd64
 pkg: github.com/redkenrok/go-nnut
 cpu: Intel(R) Core(TM) i5-1038NG7 CPU @ 2.00GHz
-BenchmarkGet-8                       	 2545692	      2868 ns/op
-BenchmarkBatchGet-8                  	 3829645	      1563 ns/op
-BenchmarkPut-8                       	  175962	     58231 ns/op
-BenchmarkBatchPut-8                  	  201055	     51987 ns/op
-BenchmarkDelete-8                    	  954511	      6306 ns/op
-BenchmarkBatchDelete-8               	 2666641	      2213 ns/op
-BenchmarkQuery-8                     	    3993	   1412529 ns/op
-BenchmarkQueryMultipleConditions-8   	    3428	   1677143 ns/op
-BenchmarkQuerySorting-8              	   48045	    123093 ns/op
-BenchmarkQueryLimitOffset-8          	    4180	   1364817 ns/op
-BenchmarkQueryCount-8                	     702	   7722509 ns/op
-BenchmarkQueryCountIndex-8           	   45964	    142239 ns/op
-BenchmarkQueryNoConditions-8         	   46587	    152208 ns/op
-BenchmarkQueryNonIndexedField-8      	   29484	    189458 ns/op
-BenchmarkQueryComplexOperators-8     	   10000	    501754 ns/op
-BenchmarkQueryLargeLimit-8           	     790	   7533817 ns/op
-BenchmarkQueryOffsetOnly-8           	     792	   8569629 ns/op
-BenchmarkQuerySortingAscending-8     	   50576	    120555 ns/op
-BenchmarkQueryCountNoConditions-8    	   44383	    133348 ns/op
-BenchmarkQueryCountNonIndexed-8      	     862	   7073822 ns/op
+BenchmarkGet-8                       	 2973112	      2038 ns/op
+BenchmarkBatchGet-8                  	 4081006	      1480 ns/op
+BenchmarkPut-8                       	  185354	     53785 ns/op
+BenchmarkBatchPut-8                  	  192571	     51723 ns/op
+BenchmarkDelete-8                    	  958870	      5994 ns/op
+BenchmarkBatchDelete-8               	 2545876	      2341 ns/op
+BenchmarkQuery-8                     	    3933	   1464660 ns/op
+BenchmarkQueryMultipleConditions-8   	    3242	   1807391 ns/op
+BenchmarkQuerySorting-8              	   46839	    128637 ns/op
+BenchmarkQueryLimitOffset-8          	    4214	   1406389 ns/op
+BenchmarkQueryCount-8                	     868	   6892744 ns/op
+BenchmarkQueryCountIndex-8           	   52657	    113999 ns/op
+BenchmarkQueryNoConditions-8         	   50565	    118505 ns/op
+BenchmarkQueryNonIndexedField-8      	   30990	    196279 ns/op
+BenchmarkQueryComplexOperators-8     	   10000	    505164 ns/op
+BenchmarkQueryLargeLimit-8           	     789	   7586008 ns/op
+BenchmarkQueryOffsetOnly-8           	     795	   7535773 ns/op
+BenchmarkQuerySortingAscending-8     	   47625	    126615 ns/op
+BenchmarkQueryCountNoConditions-8    	   42862	    140445 ns/op
+BenchmarkQueryCountNonIndexed-8      	     848	   7085303 ns/op
 ```

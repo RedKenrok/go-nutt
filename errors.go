@@ -15,10 +15,10 @@ func (e BucketNotFoundError) Error() string {
 
 // WrappedError wraps an underlying error with additional context.
 type WrappedError struct {
-	Operation     string // operation that failed
-	Bucket string
-	Key    string
-	Err    error
+	Operation string // operation that failed
+	Bucket    string
+	Key       string
+	Err       error
 }
 
 func (e WrappedError) Error() string {

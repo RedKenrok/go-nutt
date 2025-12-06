@@ -1,6 +1,7 @@
 package nnut
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,13 +45,13 @@ func TestPutAndGet(t *testing.T) {
 	}
 
 	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(testUser)
+	err = store.Put(context.Background(), testUser)
 	if err != nil {
 		t.Fatalf("Failed to put: %v", err)
 	}
 	store.database.Flush()
 
-	retrieved, err := store.Get("key1")
+	retrieved, err := store.Get(context.Background(), "key1")
 	if err != nil {
 		t.Fatalf("Failed to get: %v", err)
 	}
@@ -76,7 +77,7 @@ func TestGetNonExistent(t *testing.T) {
 		t.Fatalf("Failed to create store: %v", err)
 	}
 
-	_, err = store.Get("nonexistent")
+	_, err = store.Get(context.Background(), "nonexistent")
 	if err == nil {
 		t.Fatal("Expected error for non-existent key")
 	}
@@ -99,14 +100,14 @@ func TestDelete(t *testing.T) {
 	}
 
 	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(testUser)
+	err = store.Put(context.Background(), testUser)
 	if err != nil {
 		t.Fatalf("Failed to put: %v", err)
 	}
 	db.Flush()
 
 	// Verify record exists before deletion
-	retrieved, err := store.Get("key1")
+	retrieved, err := store.Get(context.Background(), "key1")
 	if err != nil {
 		t.Fatalf("Failed to get before delete: %v", err)
 	}
@@ -115,14 +116,14 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Remove the record
-	err = store.Delete("key1")
+	err = store.Delete(context.Background(), "key1")
 	if err != nil {
 		t.Fatalf("Failed to delete: %v", err)
 	}
 	db.Flush()
 
 	// Confirm record is no longer accessible
-	_, err = store.Get("key1")
+	_, err = store.Get(context.Background(), "key1")
 	if err == nil {
 		t.Fatal("Expected error after delete")
 	}
@@ -149,14 +150,14 @@ func TestBatchOperations(t *testing.T) {
 		{UUID: "2", Name: "Bob", Email: "bob@example.com"},
 		{UUID: "3", Name: "Charlie", Email: "charlie@example.com"},
 	}
-	err = store.PutBatch(testUsers)
+	err = store.PutBatch(context.Background(), testUsers)
 	if err != nil {
 		t.Fatalf("Failed to put batch: %v", err)
 	}
 	db.Flush()
 
 	// Retrieve multiple records simultaneously
-	retrievedResults, err := store.GetBatch([]string{"1", "2", "4"})
+	retrievedResults, err := store.GetBatch(context.Background(), []string{"1", "2", "4"})
 	if err != nil {
 		t.Fatalf("Failed to get batch: %v", err)
 	}
@@ -168,14 +169,14 @@ func TestBatchOperations(t *testing.T) {
 	}
 
 	// Remove multiple records in one operation
-	err = store.DeleteBatch([]string{"1", "3"})
+	err = store.DeleteBatch(context.Background(), []string{"1", "3"})
 	if err != nil {
 		t.Fatalf("Failed to delete batch: %v", err)
 	}
 	db.Flush()
 
 	// Verify only expected records remain
-	retrievedResults, err = store.GetBatch([]string{"1", "2", "3"})
+	retrievedResults, err = store.GetBatch(context.Background(), []string{"1", "2", "3"})
 	if err != nil {
 		t.Fatalf("Failed to get batch after delete: %v", err)
 	}
@@ -201,13 +202,13 @@ func TestBufferAwareReading(t *testing.T) {
 	}
 
 	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(testUser)
+	err = store.Put(context.Background(), testUser)
 	if err != nil {
 		t.Fatalf("Failed to put: %v", err)
 	}
 
 	// Get should return data from buffer without flushing
-	retrieved, err := store.Get("key1")
+	retrieved, err := store.Get(context.Background(), "key1")
 	if err != nil {
 		t.Fatalf("Failed to get from buffer: %v", err)
 	}
@@ -217,12 +218,12 @@ func TestBufferAwareReading(t *testing.T) {
 
 	// Test buffer-aware batch get
 	testUser2 := TestUser{UUID: "key2", Name: "Jane", Email: "jane@example.com"}
-	err = store.Put(testUser2)
+	err = store.Put(context.Background(), testUser2)
 	if err != nil {
 		t.Fatalf("Failed to put second user: %v", err)
 	}
 
-	results, err := store.GetBatch([]string{"key1", "key2", "nonexistent"})
+	results, err := store.GetBatch(context.Background(), []string{"key1", "key2", "nonexistent"})
 	if err != nil {
 		t.Fatalf("Failed to get batch: %v", err)
 	}
@@ -261,21 +262,21 @@ func TestBufferDeduplication(t *testing.T) {
 	user2 := TestUser{UUID: key, Name: "Second", Email: "second@example.com"}
 	user3 := TestUser{UUID: key, Name: "Third", Email: "third@example.com"}
 
-	err = store.Put(user1)
+	err = store.Put(context.Background(), user1)
 	if err != nil {
 		t.Fatalf("Failed to put first: %v", err)
 	}
-	err = store.Put(user2)
+	err = store.Put(context.Background(), user2)
 	if err != nil {
 		t.Fatalf("Failed to put second: %v", err)
 	}
-	err = store.Put(user3)
+	err = store.Put(context.Background(), user3)
 	if err != nil {
 		t.Fatalf("Failed to put third: %v", err)
 	}
 
 	// Get should return the latest version
-	retrieved, err := store.Get(key)
+	retrieved, err := store.Get(context.Background(), key)
 	if err != nil {
 		t.Fatalf("Failed to get: %v", err)
 	}
@@ -306,7 +307,7 @@ func TestWALReplayWithBuffer(t *testing.T) {
 
 	// Add some data and force flush to create WAL
 	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
-	err = store.Put(testUser)
+	err = store.Put(context.Background(), testUser)
 	if err != nil {
 		t.Fatalf("Failed to put: %v", err)
 	}
@@ -327,7 +328,7 @@ func TestWALReplayWithBuffer(t *testing.T) {
 	}
 
 	// Data should be replayed from WAL
-	retrieved, err := store2.Get("key1")
+	retrieved, err := store2.Get(context.Background(), "key1")
 	if err != nil {
 		t.Fatalf("Failed to get after replay: %v", err)
 	}

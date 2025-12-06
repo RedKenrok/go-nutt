@@ -1,6 +1,7 @@
 package nnut
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,7 @@ func TestQuery(t *testing.T) {
 		{UUID: "3", Name: "Alice", Email: "alice2@example.com", Age: 35},
 	}
 	for _, user := range testUsers {
-		err = store.Put(user)
+		err = store.Put(context.Background(), user)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -37,7 +38,7 @@ func TestQuery(t *testing.T) {
 	db.Flush()
 
 	// Test filtering by indexed field
-	retrievedResults, err := store.Query(&Query{
+	retrievedResults, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
 		},
@@ -78,7 +79,7 @@ func TestQueryMultipleConditions(t *testing.T) {
 		{UUID: "4", Name: "Charlie", Email: "charlie@example.com", Age: 40},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -86,7 +87,7 @@ func TestQueryMultipleConditions(t *testing.T) {
 	db.Flush()
 
 	// Test combining indexed and non-indexed conditions
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
 			{Field: "Age", Value: 30, Operator: GreaterThan},
@@ -125,7 +126,7 @@ func TestQuerySorting(t *testing.T) {
 		{UUID: "3", Name: "Bob", Email: "bob@example.com", Age: 25},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -133,7 +134,7 @@ func TestQuerySorting(t *testing.T) {
 	db.Flush()
 
 	// Test ordering results using index
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Index: "name",
 		Sort:  Ascending,
 	})
@@ -148,7 +149,7 @@ func TestQuerySorting(t *testing.T) {
 	}
 
 	// Query sorted by name descending
-	results, err = store.Query(&Query{
+	results, err = store.Query(context.Background(), &Query{
 		Index: "name",
 		Sort:  Descending,
 	})
@@ -183,7 +184,7 @@ func TestQueryLimitOffset(t *testing.T) {
 		{UUID: "4", Name: "David", Email: "david@example.com", Age: 35},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -191,7 +192,7 @@ func TestQueryLimitOffset(t *testing.T) {
 	db.Flush()
 
 	// Test pagination with limit
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Index: "name",
 		Sort:  Ascending,
 		Limit: 2,
@@ -207,7 +208,7 @@ func TestQueryLimitOffset(t *testing.T) {
 	}
 
 	// Query with offset
-	results, err = store.Query(&Query{
+	results, err = store.Query(context.Background(), &Query{
 		Index:  "name",
 		Sort:   Ascending,
 		Offset: 1,
@@ -247,7 +248,7 @@ func TestQueryOperators(t *testing.T) {
 		{UUID: "4", Name: "David", Email: "david@example.com", Age: 35},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -255,7 +256,7 @@ func TestQueryOperators(t *testing.T) {
 	db.Flush()
 
 	// Test GreaterThan on Age
-	retrievedResults, err := store.Query(&Query{
+	retrievedResults, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Age", Value: 30, Operator: GreaterThan},
 		},
@@ -273,7 +274,7 @@ func TestQueryOperators(t *testing.T) {
 	}
 
 	// Test LessThanOrEqual on Name
-	retrievedResults, err = store.Query(&Query{
+	retrievedResults, err = store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Bob", Operator: LessThanOrEqual},
 		},
@@ -309,7 +310,7 @@ func TestQueryCount(t *testing.T) {
 		{UUID: "3", Name: "Alice", Email: "alice2@example.com", Age: 35},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -317,7 +318,7 @@ func TestQueryCount(t *testing.T) {
 	db.Flush()
 
 	// Count with condition
-	count, err := store.QueryCount(&Query{
+	count, err := store.QueryCount(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
 		},
@@ -352,7 +353,7 @@ func TestQueryNoConditionsLimit(t *testing.T) {
 		{UUID: "3", Name: "Charlie", Email: "charlie@example.com", Age: 40},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -360,7 +361,7 @@ func TestQueryNoConditionsLimit(t *testing.T) {
 	db.Flush()
 
 	// Query no conditions, no limit
-	results, err := store.Query(&Query{})
+	results, err := store.Query(context.Background(), &Query{})
 	if err != nil {
 		t.Fatalf("Failed to query: %v", err)
 	}
@@ -369,7 +370,7 @@ func TestQueryNoConditionsLimit(t *testing.T) {
 	}
 
 	// Query no conditions with limit
-	results, err = store.Query(&Query{
+	results, err = store.Query(context.Background(), &Query{
 		Limit: 2,
 	})
 	if err != nil {
@@ -404,7 +405,7 @@ func TestQueryNonIndexedWithLimit(t *testing.T) {
 		{UUID: "5", Name: "Eve", Email: "eve@example.com", Age: 28},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -412,7 +413,7 @@ func TestQueryNonIndexedWithLimit(t *testing.T) {
 	db.Flush()
 
 	// Query non-indexed field with limit
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Age", Value: 25, Operator: GreaterThan},
 		},
@@ -450,7 +451,7 @@ func TestQueryComplexWithLimit(t *testing.T) {
 		{UUID: "4", Name: "David", Email: "david@example.com", Age: 35},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -458,7 +459,7 @@ func TestQueryComplexWithLimit(t *testing.T) {
 	db.Flush()
 
 	// Query with mixed conditions and limit
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "A", Operator: GreaterThanOrEqual}, // Alice, Bob, Charlie, David
 			{Field: "Age", Value: 30, Operator: LessThan},             // Bob (25)
@@ -503,7 +504,7 @@ func TestQueryLargeLimit(t *testing.T) {
 		}
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -511,7 +512,7 @@ func TestQueryLargeLimit(t *testing.T) {
 	db.Flush()
 
 	// Query with large limit
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "User", Operator: GreaterThanOrEqual},
 		},
@@ -548,7 +549,7 @@ func TestQueryOffsetNoLimit(t *testing.T) {
 		{UUID: "4", Name: "David", Email: "david@example.com", Age: 35},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -556,7 +557,7 @@ func TestQueryOffsetNoLimit(t *testing.T) {
 	db.Flush()
 
 	// Query with offset but no limit
-	results, err := store.Query(&Query{
+	results, err := store.Query(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Name", Value: "Alice"},
 		},
@@ -592,7 +593,7 @@ func TestQueryCountAll(t *testing.T) {
 		{UUID: "2", Name: "Bob", Email: "bob@example.com", Age: 25},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -600,7 +601,7 @@ func TestQueryCountAll(t *testing.T) {
 	db.Flush()
 
 	// Count no conditions
-	count, err := store.QueryCount(&Query{})
+	count, err := store.QueryCount(context.Background(), &Query{})
 	if err != nil {
 		t.Fatalf("Failed to query count: %v", err)
 	}
@@ -631,7 +632,7 @@ func TestQueryCountNonIndexed(t *testing.T) {
 		{UUID: "3", Name: "Charlie", Email: "charlie@example.com", Age: 40},
 	}
 	for _, u := range users {
-		err = store.Put(u)
+		err = store.Put(context.Background(), u)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -639,7 +640,7 @@ func TestQueryCountNonIndexed(t *testing.T) {
 	db.Flush()
 
 	// Count non-indexed
-	count, err := store.QueryCount(&Query{
+	count, err := store.QueryCount(context.Background(), &Query{
 		Conditions: []Condition{
 			{Field: "Age", Value: 25, Operator: GreaterThan},
 		},
@@ -650,4 +651,42 @@ func TestQueryCountNonIndexed(t *testing.T) {
 	if count != 2 { // 30 and 40
 		t.Fatalf("Expected count 2, got %d", count)
 	}
+}
+
+// FuzzQueryConditions fuzzes query conditions to find edge cases and crashes.
+// Run with: go test -fuzz=FuzzQueryConditions -fuzztime=30s
+func FuzzQueryConditions(f *testing.F) {
+	// Seed with some initial inputs
+	f.Add("Name", "Alice")
+	f.Add("Age", "25")
+	f.Add("Email", "test@example.com")
+
+	f.Fuzz(func(t *testing.T, field string, valueStr string) {
+		dbPath := filepath.Join(t.TempDir(), "fuzz.db")
+		db, err := Open(dbPath)
+		if err != nil {
+			return // Skip if DB open fails
+		}
+		defer db.Close()
+		defer os.Remove(dbPath)
+		defer os.Remove(dbPath + ".wal")
+
+		store, err := NewStore[TestUser](db, "users")
+		if err != nil {
+			return
+		}
+
+		// Add some test data
+		user := TestUser{UUID: "test1", Name: "Alice", Email: "alice@example.com", Age: 30}
+		store.Put(context.Background(), user)
+		db.Flush()
+
+		// Fuzz the condition with random operator
+		operator := Operator(len(field) % 6) // Simple way to vary operator
+		condition := Condition{Field: field, Value: valueStr, Operator: operator}
+
+		// This should not panic or crash
+		_, _ = store.Query(context.Background(), &Query{Conditions: []Condition{condition}})
+		_, _ = store.QueryCount(context.Background(), &Query{Conditions: []Condition{condition}})
+	})
 }

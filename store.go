@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+const (
+	MaxKeyLength        = 1024
+	MaxBucketNameLength = 255
+)
+
 // Store represents a typed bucket
 type Store[T any] struct {
 	database    *DB
@@ -16,6 +21,19 @@ type Store[T any] struct {
 
 // NewStore creates a new store for type T with the given bucket name
 func NewStore[T any](database *DB, bucketName string) (*Store[T], error) {
+	// Validate bucket name
+	if bucketName == "" {
+		return nil, BucketNameError{BucketName: bucketName, Reason: "cannot be empty"}
+	}
+	if len(bucketName) > MaxBucketNameLength {
+		return nil, BucketNameError{BucketName: bucketName, Reason: "too long"}
+	}
+	for _, r := range bucketName {
+		if r == '\x00' || r == '/' || r == '\\' {
+			return nil, BucketNameError{BucketName: bucketName, Reason: "contains invalid character"}
+		}
+	}
+
 	// Inspect struct fields at runtime to identify key and index fields for dynamic storage
 	var zeroValue T
 	typeOfStruct := reflect.TypeOf(zeroValue)
@@ -45,6 +63,17 @@ func NewStore[T any](database *DB, bucketName string) (*Store[T], error) {
 	if keyFieldIndex == -1 {
 		return nil, KeyFieldNotFoundError{}
 	}
+
+	// Validate index fields are strings or comparable (int)
+	for indexName, fieldIndex := range indexFields {
+		field := typeOfStruct.Field(fieldIndex)
+		kind := field.Type.Kind()
+		if kind != reflect.String && kind != reflect.Int {
+			return nil, IndexFieldTypeError{FieldName: field.Name, Type: field.Type.String()}
+		}
+		_ = indexName // avoid unused variable
+	}
+
 	return &Store[T]{
 		database:    database,
 		bucket:      []byte(bucketName),
@@ -65,4 +94,20 @@ func (s *Store[T]) extractIndexValues(value T) map[string]string {
 		}
 	}
 	return result
+}
+
+// validateKey checks if a key is valid
+func validateKey(key string) error {
+	if key == "" {
+		return InvalidKeyError{Key: key}
+	}
+	if len(key) > MaxKeyLength {
+		return InvalidKeyError{Key: key}
+	}
+	for _, r := range key {
+		if r == '\x00' {
+			return InvalidKeyError{Key: key}
+		}
+	}
+	return nil
 }

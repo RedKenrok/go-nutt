@@ -2,6 +2,7 @@ package nnut
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log"
 	"os"
@@ -18,6 +19,7 @@ type Config struct {
 	WALFlushInterval time.Duration
 	WALPath          string
 	MaxBufferBytes   int
+	FlushChannelSize int // Size of the flush channel buffer (default 10)
 }
 
 // DB wraps bbolt.DB
@@ -57,6 +59,7 @@ func Open(path string) (*DB, error) {
 		WALFlushInterval: time.Minute * 15,
 		WALPath:          path + ".wal",
 		MaxBufferBytes:   10 * 1024 * 1024, // 10MB
+		FlushChannelSize: 10,
 	}
 	return OpenWithConfig(path, config)
 }
@@ -78,11 +81,27 @@ func validateConfig(config *Config) error {
 	if config.MaxBufferBytes <= 0 {
 		return InvalidConfigError{Field: "MaxBufferBytes", Value: config.MaxBufferBytes, Reason: "must be positive"}
 	}
+	if config.FlushChannelSize < 0 {
+		return InvalidConfigError{Field: "FlushChannelSize", Value: config.FlushChannelSize, Reason: "cannot be negative"}
+	}
 	return nil
 }
 
 // OpenWithConfig opens a database with config
 func OpenWithConfig(path string, config *Config) (*DB, error) {
+	if config != nil && config.WALPath == "" {
+		config.WALPath = path + ".wal"
+	}
+	if config != nil && config.MaxBufferBytes == 0 {
+		config.MaxBufferBytes = 10 * 1024 * 1024 // 10MB
+	}
+	if config != nil && config.FlushChannelSize == 0 {
+		config.FlushChannelSize = 10
+	}
+
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
 	if config != nil && config.WALPath == "" {
 		config.WALPath = path + ".wal"
 	}
@@ -101,7 +120,7 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 		DB:               database,
 		config:           config,
 		operationsBuffer: make(map[string]operation),
-		flushChannel:     make(chan struct{}, 1),
+		flushChannel:     make(chan struct{}, config.FlushChannelSize),
 		closeChannel:     make(chan struct{}),
 	}
 
@@ -297,7 +316,7 @@ func bufferKey(bucket []byte, key string) string {
 }
 
 // writeOperation adds a single operation to WAL and buffer
-func (db *DB) writeOperation(op operation) error {
+func (db *DB) writeOperation(ctx context.Context, op operation) error {
 	// Encode operation to measure size
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
@@ -306,6 +325,12 @@ func (db *DB) writeOperation(op operation) error {
 		return WrappedError{Operation: "encode WAL", Err: err}
 	}
 	encodedBytes := buf.Bytes()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
 	// Write to WAL file
 	db.walMutex.Lock()
@@ -333,7 +358,7 @@ func (db *DB) writeOperation(op operation) error {
 }
 
 // writeOperations adds multiple operations to WAL and buffer atomically
-func (db *DB) writeOperations(ops []operation) error {
+func (db *DB) writeOperations(ctx context.Context, ops []operation) error {
 	if len(ops) == 0 {
 		return nil
 	}
@@ -354,6 +379,12 @@ func (db *DB) writeOperations(ops []operation) error {
 		totalBytes += uint64(tempBuf.Len())
 	}
 	walBytes := walBuffer.Bytes()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 
 	// Write batch to WAL file
 	db.walMutex.Lock()

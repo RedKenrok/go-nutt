@@ -2,13 +2,18 @@ package nnut
 
 import (
 	"bytes"
+	"context"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"go.etcd.io/bbolt"
 )
 
 // Get retrieves a value by key
-func (s *Store[T]) Get(key string) (T, error) {
+func (s *Store[T]) Get(ctx context.Context, key string) (T, error) {
+	if err := validateKey(key); err != nil {
+		var zero T
+		return zero, err
+	}
 	var result T
 
 	// Check buffer for pending changes first
@@ -30,6 +35,12 @@ func (s *Store[T]) Get(key string) (T, error) {
 	}
 
 	// No buffered changes, query database
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	default:
+	}
 	err := s.database.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(s.bucket)
 		if bucket == nil {
@@ -52,7 +63,12 @@ func (s *Store[T]) Get(key string) (T, error) {
 }
 
 // GetBatch retrieves multiple values by keys
-func (s *Store[T]) GetBatch(keys []string) (map[string]T, error) {
+func (s *Store[T]) GetBatch(ctx context.Context, keys []string) (map[string]T, error) {
+	for _, key := range keys {
+		if err := validateKey(key); err != nil {
+			return nil, err
+		}
+	}
 	results := make(map[string]T)
 	failed := make(map[string]error)
 
@@ -77,6 +93,11 @@ func (s *Store[T]) GetBatch(keys []string) (map[string]T, error) {
 		}
 	}
 
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	err := s.database.View(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket(s.bucket)
 		if bucket == nil {

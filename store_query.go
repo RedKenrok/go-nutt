@@ -2,6 +2,7 @@ package nnut
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 	"sort"
 	"sync"
@@ -71,6 +72,21 @@ func (s *Store[T]) validateQuery(query *Query) error {
 			return InvalidQueryError{Field: "Index", Value: query.Index, Reason: "index field does not exist"}
 		}
 	}
+	// Validate conditions
+	for _, cond := range query.Conditions {
+		if _, exists := s.fieldMap[cond.Field]; !exists {
+			return InvalidQueryError{Field: "Condition.Field", Value: cond.Field, Reason: "field does not exist"}
+		}
+		// Check if value is comparable (string or int)
+		if cond.Value != nil {
+			switch cond.Value.(type) {
+			case string, int:
+				// ok
+			default:
+				return InvalidQueryError{Field: "Condition.Value", Value: cond.Value, Reason: "must be string or int"}
+			}
+		}
+	}
 	return nil
 }
 
@@ -80,12 +96,17 @@ type condWithSize struct {
 }
 
 // Query queries for records matching the conditions
-func (s *Store[T]) Query(query *Query) ([]T, error) {
+func (s *Store[T]) Query(ctx context.Context, query *Query) ([]T, error) {
 	if err := s.validateQuery(query); err != nil {
 		return nil, err
 	}
 
 	var results []T
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	err := s.database.View(func(tx *bbolt.Tx) error {
 		// Determine the maximum number of keys needed based on limit and offset
 		maxKeys := 0
@@ -151,12 +172,17 @@ func (s *Store[T]) Query(query *Query) ([]T, error) {
 }
 
 // QueryCount returns the number of records matching the query
-func (s *Store[T]) QueryCount(query *Query) (int, error) {
+func (s *Store[T]) QueryCount(ctx context.Context, query *Query) (int, error) {
 	if err := s.validateQuery(query); err != nil {
 		return 0, err
 	}
 
 	var count int
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
 	err := s.database.View(func(tx *bbolt.Tx) error {
 		// Collect candidate keys from conditions
 		var candidateKeys []string

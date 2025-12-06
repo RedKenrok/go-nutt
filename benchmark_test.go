@@ -1,6 +1,7 @@
 package nnut
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math/rand"
@@ -51,7 +52,7 @@ func TestSetupBenchmarkDB(t *testing.T) {
 		email := fmt.Sprintf("%s%d@example.com", name, index)
 		age := rand.Intn(63) + 18 // Ages 18-80
 		testUser := TestUser{UUID: key, Name: name, Email: email, Age: age}
-		err := store.Put(testUser)
+		err := store.Put(context.Background(), testUser)
 		if err != nil {
 			t.Fatalf("Failed to put: %v", err)
 		}
@@ -86,7 +87,7 @@ func BenchmarkGet(b *testing.B) {
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
 		key := fmt.Sprintf("user_%d", iteration%userCount)
-		_, err := store.Get(key)
+		_, err := store.Get(context.Background(), key)
 		if err != nil {
 			b.Fatalf("Failed to get: %v", err)
 		}
@@ -123,7 +124,7 @@ func BenchmarkBatchGet(b *testing.B) {
 		for keyIndex := 0; keyIndex < batchSize; keyIndex++ {
 			keys = append(keys, fmt.Sprintf("user_%d", (batchIndex*batchSize+keyIndex)%userCount))
 		}
-		_, err := store.GetBatch(keys)
+		_, err := store.GetBatch(context.Background(), keys)
 		if err != nil {
 			b.Fatalf("Failed to get batch: %v", err)
 		}
@@ -150,7 +151,7 @@ func BenchmarkPut(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		key := fmt.Sprintf("user_%d", i)
 		user := TestUser{UUID: key, Name: "John", Email: "john@example.com", Age: 30}
-		err := store.Put(user)
+		err := store.Put(context.Background(), user)
 		if err != nil {
 			b.Fatalf("Failed to put: %v", err)
 		}
@@ -184,7 +185,7 @@ func BenchmarkBatchPut(b *testing.B) {
 			user := TestUser{UUID: key, Name: "John", Email: "john@example.com", Age: 30}
 			users = append(users, user)
 		}
-		err := store.PutBatch(users)
+		err := store.PutBatch(context.Background(), users)
 		if err != nil {
 			b.Fatalf("Failed to put batch: %v", err)
 		}
@@ -217,7 +218,7 @@ func BenchmarkDelete(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		key := fmt.Sprintf("user_%d", i%userCount)
-		err := store.Delete(key)
+		err := store.Delete(context.Background(), key)
 		if err != nil {
 			b.Fatalf("Failed to delete: %v", err)
 		}
@@ -255,10 +256,59 @@ func BenchmarkBatchDelete(b *testing.B) {
 		for j := 0; j < batchSize; j++ {
 			keys = append(keys, fmt.Sprintf("user_%d", (i*batchSize+j)%userCount))
 		}
-		err := store.DeleteBatch(keys)
+		err := store.DeleteBatch(context.Background(), keys)
 		if err != nil {
 			b.Fatalf("Failed to delete batch: %v", err)
 		}
 	}
+	db.Flush()
+}
+
+// BenchmarkHighLoadConcurrent simulates high concurrent load with mixed operations
+func BenchmarkHighLoadConcurrent(b *testing.B) {
+  // Copy template database
+	os.Remove("benchmark.db")
+	os.Remove("benchmark.db.wal")
+	err := copyFile("benchmark_template.db", "benchmark.db")
+	if err != nil {
+		b.Fatalf("Failed to copy template DB: %v", err)
+	}
+
+	db, err := Open("benchmark.db")
+	if err != nil {
+		b.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("benchmark.db")
+	defer os.Remove("benchmark.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		b.Fatalf("Failed to create store: %v", err)
+	}
+
+	// High load: concurrent Puts, Gets, and Queries
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		index := 0
+		for pb.Next() {
+			key := fmt.Sprintf("load_%d_%d", index%10, index)
+			index++
+
+			// Mix of operations
+			switch index % 3 {
+			case 0: // Put
+				user := TestUser{UUID: key, Name: "New", Email: "new@example.com", Age: 29}
+				store.Put(context.Background(), user)
+			case 1: // Get
+				store.Get(context.Background(), fmt.Sprintf("user_%d", index%userCount))
+			case 2: // Query
+				store.Query(context.Background(), &Query{
+					Conditions: []Condition{{Field: "Name", Value: "Alice"}},
+					Limit:      10,
+				})
+			}
+		}
+	})
 	db.Flush()
 }

@@ -2,23 +2,24 @@ package nnut
 
 import (
 	"bytes"
+	"context"
 	"reflect"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
 
 // Persist a single record with index updates
-func (s *Store[T]) Put(value T) error {
+func (s *Store[T]) Put(ctx context.Context, value T) error {
 	// Retrieve the primary key via runtime type inspection
 	valueReflection := reflect.ValueOf(value)
 	key := valueReflection.Field(s.keyField).String()
-	if key == "" {
-		return InvalidKeyError{Key: key}
+	if err := validateKey(key); err != nil {
+		return err
 	}
 
 	// Fetch existing record to handle index changes
 	var oldIndexValues map[string]string
-	oldValue, err := s.Get(key)
+	oldValue, err := s.Get(ctx, key)
 	if err == nil {
 		oldIndexValues = s.extractIndexValues(oldValue)
 	} else {
@@ -54,26 +55,26 @@ func (s *Store[T]) Put(value T) error {
 		IndexOperations: indexOperations,
 	}
 
-	return s.database.writeOperation(operation)
+	return s.database.writeOperation(ctx, operation)
 }
 
 // Persist multiple records efficiently
-func (s *Store[T]) PutBatch(values []T) error {
+func (s *Store[T]) PutBatch(ctx context.Context, values []T) error {
 	// Collect primary keys from all values
 	keys := make([]string, len(values))
 	keyToValue := make(map[string]T)
 	for index, value := range values {
 		valueReflection := reflect.ValueOf(value)
 		key := valueReflection.Field(s.keyField).String()
-		if key == "" {
-			return InvalidKeyError{Key: key}
+		if err := validateKey(key); err != nil {
+			return err
 		}
 		keys[index] = key
 		keyToValue[key] = value
 	}
 
 	// Retrieve existing records for index updates
-	oldValues, err := s.GetBatch(keys)
+	oldValues, err := s.GetBatch(ctx, keys)
 	if err != nil {
 		return WrappedError{Operation: "get_batch", Bucket: string(s.bucket), Err: err}
 	}
@@ -126,5 +127,5 @@ func (s *Store[T]) PutBatch(values []T) error {
 		operations = append(operations, operation)
 	}
 
-	return s.database.writeOperations(operations)
+	return s.database.writeOperations(ctx, operations)
 }
