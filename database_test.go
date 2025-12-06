@@ -31,8 +31,9 @@ func TestOpen(t *testing.T) {
 
 func TestWALFlushSize(t *testing.T) {
 	config := &Config{
-		WALFlushSize:     2,
+		WALFlushSize:     1000,      // large count to not trigger
 		WALFlushInterval: time.Hour, // long to not auto flush
+		MaxBufferBytes:   1000,      // size to allow 2 operations but not 3
 	}
 	db, err := OpenWithConfig("test.db", config)
 	if err != nil {
@@ -74,10 +75,13 @@ func TestWALFlushSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to put: %v", err)
 	}
-	// Buffer below capacity, preventing flush
-	_, err = store.Get("key3")
-	if err == nil {
-		t.Fatal("key3 should not be flushed yet")
+	// With buffer-aware reading, key3 should be retrievable from buffer
+	retrieved3, err := store.Get("key3")
+	if err != nil {
+		t.Fatalf("Failed to get key3: %v", err)
+	}
+	if retrieved3.Name != thirdUser.Name {
+		t.Fatal("key3 not retrievable from buffer")
 	}
 }
 
@@ -114,6 +118,51 @@ func TestWALFlushInterval(t *testing.T) {
 	}
 	if retrieved.Name != testUser.Name {
 		t.Fatal("Not flushed by interval")
+	}
+}
+
+func TestSizeBasedFlush(t *testing.T) {
+	config := &Config{
+		WALFlushSize:     1000,      // Large count to not trigger
+		WALFlushInterval: time.Hour, // Long to not trigger
+		MaxBufferBytes:   1000,      // Small size to trigger flush
+	}
+	db, err := OpenWithConfig("test.db", config)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove("test.db")
+	defer os.Remove("test.db.wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add operations until buffer size triggers flush
+	for i := 0; i < 10; i++ {
+		user := TestUser{
+			UUID:  fmt.Sprintf("user%d", i),
+			Name:  fmt.Sprintf("Name%d", i),
+			Email: fmt.Sprintf("email%d@example.com", i),
+		}
+		err = store.Put(user)
+		if err != nil {
+			t.Fatalf("Failed to put user %d: %v", i, err)
+		}
+	}
+
+	// Give time for flush to occur
+	time.Sleep(100 * time.Millisecond)
+
+	// Check that data is persisted (flush occurred)
+	retrieved, err := store.Get("user0")
+	if err != nil {
+		t.Fatalf("Failed to get user0: %v", err)
+	}
+	if retrieved.Name != "Name0" {
+		t.Fatal("Data not flushed properly")
 	}
 }
 

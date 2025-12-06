@@ -1,11 +1,5 @@
 package nnut
 
-import (
-	"bytes"
-
-	"github.com/vmihailenco/msgpack/v5"
-)
-
 // Delete removes a value by key
 func (s *Store[T]) Delete(key string) error {
 	// Retrieve existing value to update indexes correctly
@@ -38,30 +32,7 @@ func (s *Store[T]) Delete(key string) error {
 		IndexOperations: indexOperations,
 	}
 
-	// Log the operation for crash recovery
-	s.database.walMutex.Lock()
-	var walBuffer bytes.Buffer
-	walEncoder := msgpack.NewEncoder(&walBuffer)
-	err = walEncoder.Encode(operation)
-	if err != nil {
-		s.database.walMutex.Unlock()
-		return WrappedError{Op: "encode WAL", Bucket: string(s.bucket), Key: key, Err: err}
-	}
-	_, err = s.database.walFile.Write(walBuffer.Bytes())
-	s.database.walMutex.Unlock()
-	if err != nil {
-		return FileSystemError{Path: s.database.config.WALPath, Operation: "write", Err: err}
-	}
-
-	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, operation)
-	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
-	s.database.operationsBufferMutex.Unlock()
-
-	if shouldFlush {
-		s.database.flushChannel <- struct{}{}
-	}
-	return nil
+	return s.database.writeOperation(operation)
 }
 
 // DeleteBatch removes multiple values by keys
@@ -69,7 +40,7 @@ func (s *Store[T]) DeleteBatch(keys []string) error {
 	// Fetch current values to handle index updates in batch
 	oldValues, err := s.GetBatch(keys)
 	if err != nil {
-		return WrappedError{Op: "get_batch", Bucket: string(s.bucket), Err: err}
+		return WrappedError{Operation: "get_batch", Bucket: string(s.bucket), Err: err}
 	}
 
 	// Build operations for each key to be deleted
@@ -106,37 +77,5 @@ func (s *Store[T]) DeleteBatch(keys []string) error {
 		operations = append(operations, operation)
 	}
 
-	// Write all operations to WAL atomically
-	var walBuffer bytes.Buffer
-	walEncoder := msgpack.NewEncoder(&walBuffer)
-	for _, operation := range operations {
-		err = walEncoder.Encode(operation)
-		if err != nil {
-			return WrappedError{Op: "encode WAL batch", Bucket: string(s.bucket), Err: err}
-		}
-	}
-	s.database.walMutex.Lock()
-	_, err = s.database.walFile.Write(walBuffer.Bytes())
-	s.database.walMutex.Unlock()
-	if err != nil {
-		return FileSystemError{Path: s.database.config.WALPath, Operation: "write_batch", Err: err}
-	}
-	s.database.walMutex.Lock()
-	_, err = s.database.walFile.Write(walBuffer.Bytes())
-	s.database.walMutex.Unlock()
-	if err != nil {
-		return WrappedError{Op: "write WAL batch", Bucket: string(s.bucket), Err: err}
-	}
-
-	// Queue operations for eventual flush to disk
-	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, operations...)
-	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
-	s.database.operationsBufferMutex.Unlock()
-
-	if shouldFlush {
-		s.database.flushChannel <- struct{}{}
-	}
-
-	return nil
+	return s.database.writeOperations(operations)
 }

@@ -15,7 +15,7 @@ func (e BucketNotFoundError) Error() string {
 
 // WrappedError wraps an underlying error with additional context.
 type WrappedError struct {
-	Op     string // operation that failed
+	Operation     string // operation that failed
 	Bucket string
 	Key    string
 	Err    error
@@ -23,9 +23,9 @@ type WrappedError struct {
 
 func (e WrappedError) Error() string {
 	if e.Key != "" {
-		return fmt.Sprintf("%s failed for bucket '%s', key '%s': %v", e.Op, e.Bucket, e.Key, e.Err)
+		return fmt.Sprintf("%s failed for bucket '%s', key '%s': %v", e.Operation, e.Bucket, e.Key, e.Err)
 	}
-	return fmt.Sprintf("%s failed for bucket '%s': %v", e.Op, e.Bucket, e.Err)
+	return fmt.Sprintf("%s failed for bucket '%s': %v", e.Operation, e.Bucket, e.Err)
 }
 
 func (e WrappedError) Unwrap() error {

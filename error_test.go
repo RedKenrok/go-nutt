@@ -192,6 +192,7 @@ func TestConfigValidation(t *testing.T) {
 				WALFlushSize:     100,
 				WALFlushInterval: time.Minute,
 				WALPath:          "/tmp/test.wal",
+				MaxBufferBytes:   1024 * 1024,
 			},
 			wantErr: false,
 		},

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewStore(t *testing.T) {
@@ -180,5 +181,157 @@ func TestBatchOperations(t *testing.T) {
 	}
 	if len(retrievedResults) != 1 || retrievedResults["2"].Name != "Bob" {
 		t.Fatal("Wrong results after batch delete")
+	}
+}
+
+func TestBufferAwareReading(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
+	err = store.Put(testUser)
+	if err != nil {
+		t.Fatalf("Failed to put: %v", err)
+	}
+
+	// Get should return data from buffer without flushing
+	retrieved, err := store.Get("key1")
+	if err != nil {
+		t.Fatalf("Failed to get from buffer: %v", err)
+	}
+	if retrieved.Name != testUser.Name || retrieved.Email != testUser.Email {
+		t.Fatalf("Retrieved data mismatch: got %+v, want %+v", retrieved, testUser)
+	}
+
+	// Test buffer-aware batch get
+	testUser2 := TestUser{UUID: "key2", Name: "Jane", Email: "jane@example.com"}
+	err = store.Put(testUser2)
+	if err != nil {
+		t.Fatalf("Failed to put second user: %v", err)
+	}
+
+	results, err := store.GetBatch([]string{"key1", "key2", "nonexistent"})
+	if err != nil {
+		t.Fatalf("Failed to get batch: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 results, got %d", len(results))
+	}
+	if results["key1"].Name != "John" || results["key2"].Name != "Jane" {
+		t.Fatal("Wrong batch results")
+	}
+}
+
+func TestBufferDeduplication(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	config := &Config{
+		WALFlushSize:     1000,
+		WALFlushInterval: time.Hour,
+		MaxBufferBytes:   10000, // Large enough to hold multiple operations
+	}
+	db, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Put same key multiple times - should only keep latest
+	key := "testkey"
+	user1 := TestUser{UUID: key, Name: "First", Email: "first@example.com"}
+	user2 := TestUser{UUID: key, Name: "Second", Email: "second@example.com"}
+	user3 := TestUser{UUID: key, Name: "Third", Email: "third@example.com"}
+
+	err = store.Put(user1)
+	if err != nil {
+		t.Fatalf("Failed to put first: %v", err)
+	}
+	err = store.Put(user2)
+	if err != nil {
+		t.Fatalf("Failed to put second: %v", err)
+	}
+	err = store.Put(user3)
+	if err != nil {
+		t.Fatalf("Failed to put third: %v", err)
+	}
+
+	// Get should return the latest version
+	retrieved, err := store.Get(key)
+	if err != nil {
+		t.Fatalf("Failed to get: %v", err)
+	}
+	if retrieved.Name != "Third" {
+		t.Fatalf("Expected latest version, got %s", retrieved.Name)
+	}
+}
+
+func TestWALReplayWithBuffer(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	config := &Config{
+		WALFlushSize:     1000,
+		WALFlushInterval: time.Hour,
+		MaxBufferBytes:   1000,
+	}
+	db, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add some data and force flush to create WAL
+	testUser := TestUser{UUID: "key1", Name: "John", Email: "john@example.com"}
+	err = store.Put(testUser)
+	if err != nil {
+		t.Fatalf("Failed to put: %v", err)
+	}
+	db.Flush()
+
+	// Close and reopen to test WAL replay
+	db.Close()
+
+	db2, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to reopen DB: %v", err)
+	}
+	defer db2.Close()
+
+	store2, err := NewStore[TestUser](db2, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Data should be replayed from WAL
+	retrieved, err := store2.Get("key1")
+	if err != nil {
+		t.Fatalf("Failed to get after replay: %v", err)
+	}
+	if retrieved.Name != testUser.Name {
+		t.Fatalf("WAL replay failed: got %s, want %s", retrieved.Name, testUser.Name)
 	}
 }

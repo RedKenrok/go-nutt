@@ -1,6 +1,7 @@
 package nnut
 
 import (
+	"bytes"
 	"io"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ type Config struct {
 	WALFlushSize     int
 	WALFlushInterval time.Duration
 	WALPath          string
+	MaxBufferBytes   int
 }
 
 // DB wraps bbolt.DB
@@ -25,8 +27,9 @@ type DB struct {
 
 	walFile               *os.File
 	walMutex              sync.Mutex
-	operationsBuffer      []operation
+	operationsBuffer      map[string]operation
 	operationsBufferMutex sync.Mutex
+	bytesInBuffer         uint64
 
 	flushChannel   chan struct{}
 	closeChannel   chan struct{}
@@ -53,6 +56,7 @@ func Open(path string) (*DB, error) {
 		WALFlushSize:     1024,
 		WALFlushInterval: time.Minute * 15,
 		WALPath:          path + ".wal",
+		MaxBufferBytes:   10 * 1024 * 1024, // 10MB
 	}
 	return OpenWithConfig(path, config)
 }
@@ -71,6 +75,9 @@ func validateConfig(config *Config) error {
 	if config.WALPath == "" {
 		return InvalidConfigError{Field: "WALPath", Value: config.WALPath, Reason: "cannot be empty"}
 	}
+	if config.MaxBufferBytes <= 0 {
+		return InvalidConfigError{Field: "MaxBufferBytes", Value: config.MaxBufferBytes, Reason: "must be positive"}
+	}
 	return nil
 }
 
@@ -78,6 +85,9 @@ func validateConfig(config *Config) error {
 func OpenWithConfig(path string, config *Config) (*DB, error) {
 	if config != nil && config.WALPath == "" {
 		config.WALPath = path + ".wal"
+	}
+	if config != nil && config.MaxBufferBytes == 0 {
+		config.MaxBufferBytes = 10 * 1024 * 1024 // 10MB
 	}
 
 	if err := validateConfig(config); err != nil {
@@ -90,7 +100,7 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 	databaseInstance := &DB{
 		DB:               database,
 		config:           config,
-		operationsBuffer: make([]operation, 0, config.WALFlushSize),
+		operationsBuffer: make(map[string]operation),
 		flushChannel:     make(chan struct{}, 1),
 		closeChannel:     make(chan struct{}),
 	}
@@ -114,16 +124,12 @@ func OpenWithConfig(path string, config *Config) (*DB, error) {
 	return databaseInstance, nil
 }
 
-// Ensure all pending operations are persisted before shutting down to prevent data loss
-func (db *DB) Close() error {
-	close(db.closeChannel)
-	db.closeWaitGroup.Wait()
-	// Flush remaining
-	db.Flush()
-	if db.walFile != nil {
-		db.walFile.Close()
-	}
-	return db.DB.Close()
+// getLatestBufferedOperation checks the buffer for pending changes to a key
+func (db *DB) getLatestBufferedOperation(bucket []byte, key string) (operation, bool) {
+	db.operationsBufferMutex.Lock()
+	defer db.operationsBufferMutex.Unlock()
+	op, exists := db.operationsBuffer[bufferKey(bucket, key)]
+	return op, exists
 }
 
 func (db *DB) replayWAL() error {
@@ -196,7 +202,7 @@ func (db *DB) replayWAL() error {
 			return nil
 		})
 		if err != nil {
-			return WrappedError{Op: "replay_wal", Err: err}
+			return WrappedError{Operation: "replay_wal", Err: err}
 		}
 		operationIndex++
 	}
@@ -226,9 +232,12 @@ func (db *DB) flushWAL() {
 
 func (db *DB) Flush() {
 	db.operationsBufferMutex.Lock()
-	operations := make([]operation, len(db.operationsBuffer))
-	copy(operations, db.operationsBuffer)
-	db.operationsBuffer = db.operationsBuffer[:0]
+	operations := make([]operation, 0, len(db.operationsBuffer))
+	for _, op := range db.operationsBuffer {
+		operations = append(operations, op)
+	}
+	db.operationsBuffer = make(map[string]operation)
+	db.bytesInBuffer = 0
 	db.operationsBufferMutex.Unlock()
 
 	if len(operations) == 0 {
@@ -280,4 +289,95 @@ func (db *DB) Flush() {
 		// Log flush errors for debugging, but don't fail the operation as operations remain in buffer for retry
 		log.Printf("Flush error: %v", FlushError{OperationCount: len(operations), Err: err})
 	}
+}
+
+// bufferKey generates a unique key for the operations buffer
+func bufferKey(bucket []byte, key string) string {
+	return string(bucket) + "\x00" + key
+}
+
+// writeOperation adds a single operation to WAL and buffer
+func (db *DB) writeOperation(op operation) error {
+	// Encode operation to measure size
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	err := encoder.Encode(op)
+	if err != nil {
+		return WrappedError{Operation: "encode WAL", Err: err}
+	}
+	encodedBytes := buf.Bytes()
+
+	// Write to WAL file
+	db.walMutex.Lock()
+	_, err = db.walFile.Write(encodedBytes)
+	db.walMutex.Unlock()
+	if err != nil {
+		return FileSystemError{Path: db.config.WALPath, Operation: "write", Err: err}
+	}
+
+	// Add to buffer with deduplication
+	db.operationsBufferMutex.Lock()
+	key := bufferKey(op.Bucket, op.Key)
+	db.operationsBuffer[key] = op
+	db.bytesInBuffer += uint64(len(encodedBytes))
+	shouldFlush := db.bytesInBuffer >= uint64(db.config.MaxBufferBytes)
+	db.operationsBufferMutex.Unlock()
+
+	if shouldFlush {
+		select {
+		case db.flushChannel <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+// writeOperations adds multiple operations to WAL and buffer atomically
+func (db *DB) writeOperations(ops []operation) error {
+	if len(ops) == 0 {
+		return nil
+	}
+
+	// Encode all operations
+	var walBuffer bytes.Buffer
+	walEncoder := msgpack.NewEncoder(&walBuffer)
+	totalBytes := uint64(0)
+	for _, op := range ops {
+		err := walEncoder.Encode(op)
+		if err != nil {
+			return WrappedError{Operation: "encode WAL batch", Err: err}
+		}
+		// Measure size (approximate, since we already encoded)
+		var tempBuf bytes.Buffer
+		tempEncoder := msgpack.NewEncoder(&tempBuf)
+		tempEncoder.Encode(op)
+		totalBytes += uint64(tempBuf.Len())
+	}
+	walBytes := walBuffer.Bytes()
+
+	// Write batch to WAL file
+	db.walMutex.Lock()
+	_, err := db.walFile.Write(walBytes)
+	db.walMutex.Unlock()
+	if err != nil {
+		return FileSystemError{Path: db.config.WALPath, Operation: "write_batch", Err: err}
+	}
+
+	// Add to buffer with deduplication
+	db.operationsBufferMutex.Lock()
+	for _, op := range ops {
+		key := bufferKey(op.Bucket, op.Key)
+		db.operationsBuffer[key] = op
+	}
+	db.bytesInBuffer += totalBytes
+	shouldFlush := db.bytesInBuffer >= uint64(db.config.MaxBufferBytes)
+	db.operationsBufferMutex.Unlock()
+
+	if shouldFlush {
+		select {
+		case db.flushChannel <- struct{}{}:
+		default:
+		}
+	}
+	return nil
 }

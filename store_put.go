@@ -43,7 +43,7 @@ func (s *Store[T]) Put(value T) error {
 
 	data, err := msgpack.Marshal(value)
 	if err != nil {
-		return WrappedError{Op: "marshal", Bucket: string(s.bucket), Key: key, Err: err}
+		return WrappedError{Operation: "marshal", Bucket: string(s.bucket), Key: key, Err: err}
 	}
 
 	operation := operation{
@@ -54,30 +54,7 @@ func (s *Store[T]) Put(value T) error {
 		IndexOperations: indexOperations,
 	}
 
-	// Log the operation for crash recovery
-	s.database.walMutex.Lock()
-	var walBuffer bytes.Buffer
-	walEncoder := msgpack.NewEncoder(&walBuffer)
-	err = walEncoder.Encode(operation)
-	if err != nil {
-		s.database.walMutex.Unlock()
-		return WrappedError{Op: "encode WAL", Bucket: string(s.bucket), Key: key, Err: err}
-	}
-	_, err = s.database.walFile.Write(walBuffer.Bytes())
-	s.database.walMutex.Unlock()
-	if err != nil {
-		return FileSystemError{Path: s.database.config.WALPath, Operation: "write", Err: err}
-	}
-
-	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, operation)
-	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
-	s.database.operationsBufferMutex.Unlock()
-
-	if shouldFlush {
-		s.database.flushChannel <- struct{}{}
-	}
-	return nil
+	return s.database.writeOperation(operation)
 }
 
 // Persist multiple records efficiently
@@ -98,7 +75,7 @@ func (s *Store[T]) PutBatch(values []T) error {
 	// Retrieve existing records for index updates
 	oldValues, err := s.GetBatch(keys)
 	if err != nil {
-		return WrappedError{Op: "get_batch", Bucket: string(s.bucket), Err: err}
+		return WrappedError{Operation: "get_batch", Bucket: string(s.bucket), Err: err}
 	}
 
 	// Build operations for each record
@@ -135,7 +112,7 @@ func (s *Store[T]) PutBatch(values []T) error {
 		encoder := msgpack.NewEncoder(buf)
 		err = encoder.Encode(value)
 		if err != nil {
-			return WrappedError{Op: "encode", Bucket: string(s.bucket), Key: key, Err: err}
+			return WrappedError{Operation: "encode", Bucket: string(s.bucket), Key: key, Err: err}
 		}
 		data := buf.Bytes()
 
@@ -149,31 +126,5 @@ func (s *Store[T]) PutBatch(values []T) error {
 		operations = append(operations, operation)
 	}
 
-	// Write all operations to WAL atomically
-	var walBuffer bytes.Buffer
-	walEncoder := msgpack.NewEncoder(&walBuffer)
-	for _, operation := range operations {
-		err = walEncoder.Encode(operation)
-		if err != nil {
-			return WrappedError{Op: "encode WAL batch", Bucket: string(s.bucket), Err: err}
-		}
-	}
-	s.database.walMutex.Lock()
-	_, err = s.database.walFile.Write(walBuffer.Bytes())
-	s.database.walMutex.Unlock()
-	if err != nil {
-		return FileSystemError{Path: s.database.config.WALPath, Operation: "write_batch", Err: err}
-	}
-
-	// Queue operations for eventual flush
-	s.database.operationsBufferMutex.Lock()
-	s.database.operationsBuffer = append(s.database.operationsBuffer, operations...)
-	shouldFlush := len(s.database.operationsBuffer) >= s.database.config.WALFlushSize
-	s.database.operationsBufferMutex.Unlock()
-
-	if shouldFlush {
-		s.database.flushChannel <- struct{}{}
-	}
-
-	return nil
+	return s.database.writeOperations(operations)
 }
