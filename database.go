@@ -3,6 +3,7 @@ package nnut
 import (
 	"bytes"
 	"context"
+	"hash/crc32"
 	"io"
 	"log"
 	"os"
@@ -52,6 +53,11 @@ type operation struct {
 	IsPut           bool
 	IndexOperations []indexOperation
 	Epoch           uint64
+}
+
+type walEntry struct {
+	Operation operation
+	Checksum  uint32
 }
 
 // Open opens a database with default config
@@ -170,8 +176,8 @@ func (db *DB) replayWAL() error {
 	decoder.Reset(file)
 	operationIndex := 0
 	for {
-		var operation operation
-		err := decoder.Decode(&operation)
+		var entry walEntry
+		err := decoder.Decode(&entry)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -181,6 +187,25 @@ func (db *DB) replayWAL() error {
 			// Don't return error, as DB is consistent without WAL
 			break
 		}
+
+		// Verify checksum
+		var opBuf bytes.Buffer
+		opEncoder := msgpack.NewEncoder(&opBuf)
+		err = opEncoder.Encode(entry.Operation)
+		if err != nil {
+			log.Printf("Error re-encoding operation for checksum: %v", err)
+			os.Remove(db.config.WALPath)
+			break
+		}
+		encodedOp := opBuf.Bytes()
+		computedChecksum := crc32.ChecksumIEEE(encodedOp)
+		if computedChecksum != entry.Checksum {
+			log.Printf("WAL checksum mismatch at operation %d", operationIndex)
+			os.Remove(db.config.WALPath)
+			break
+		}
+
+		operation := entry.Operation
 
 		// Reapply operations to restore database state
 		err = db.Update(func(tx *bbolt.Tx) error {
@@ -348,18 +373,32 @@ func (db *DB) truncateWAL(committedEpoch uint64) {
 	defer msgpack.PutDecoder(decoder)
 	decoder.Reset(bytes.NewReader(data))
 	for {
-		var op operation
-		err := decoder.Decode(&op)
+		var entry walEntry
+		err := decoder.Decode(&entry)
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			log.Printf("Error decoding WAL operation: %v", err)
+			log.Printf("Error decoding WAL entry: %v", err)
 			// On decode error, keep all remaining data
 			break
 		}
-		if op.Epoch > committedEpoch {
-			remainingOps = append(remainingOps, op)
+		// Verify checksum
+		var opBuf bytes.Buffer
+		opEncoder := msgpack.NewEncoder(&opBuf)
+		err = opEncoder.Encode(entry.Operation)
+		if err != nil {
+			log.Printf("Error re-encoding operation for checksum: %v", err)
+			continue
+		}
+		encodedOp := opBuf.Bytes()
+		computedChecksum := crc32.ChecksumIEEE(encodedOp)
+		if computedChecksum != entry.Checksum {
+			log.Printf("WAL checksum mismatch during truncation")
+			continue
+		}
+		if entry.Operation.Epoch > committedEpoch {
+			remainingOps = append(remainingOps, entry.Operation)
 		}
 	}
 
@@ -406,14 +445,29 @@ func bufferKey(bucket []byte, key string) string {
 func (db *DB) writeOperation(ctx context.Context, op operation) error {
 	op.Epoch = db.currentEpoch
 
-	// Encode operation to measure size
-	var buf bytes.Buffer
-	encoder := msgpack.NewEncoder(&buf)
-	err := encoder.Encode(op)
+	// Encode operation
+	var opBuf bytes.Buffer
+	opEncoder := msgpack.NewEncoder(&opBuf)
+	err := opEncoder.Encode(op)
 	if err != nil {
-		return WrappedError{Operation: "encode WAL", Err: err}
+		return WrappedError{Operation: "encode operation", Err: err}
 	}
-	encodedBytes := buf.Bytes()
+	encodedOp := opBuf.Bytes()
+
+	// Compute checksum
+	checksum := crc32.ChecksumIEEE(encodedOp)
+
+	// Create WAL entry
+	entry := walEntry{Operation: op, Checksum: checksum}
+
+	// Encode entry
+	var entryBuf bytes.Buffer
+	entryEncoder := msgpack.NewEncoder(&entryBuf)
+	err = entryEncoder.Encode(entry)
+	if err != nil {
+		return WrappedError{Operation: "encode WAL entry", Err: err}
+	}
+	encodedEntry := entryBuf.Bytes()
 
 	select {
 	case <-ctx.Done():
@@ -423,7 +477,7 @@ func (db *DB) writeOperation(ctx context.Context, op operation) error {
 
 	// Write to WAL file
 	db.walMutex.Lock()
-	_, err = db.walFile.Write(encodedBytes)
+	_, err = db.walFile.Write(encodedEntry)
 	db.walMutex.Unlock()
 	if err != nil {
 		return FileSystemError{Path: db.config.WALPath, Operation: "write", Err: err}
@@ -433,7 +487,7 @@ func (db *DB) writeOperation(ctx context.Context, op operation) error {
 	db.operationsBufferMutex.Lock()
 	key := bufferKey(op.Bucket, op.Key)
 	db.operationsBuffer[key] = op
-	db.bytesInBuffer += uint64(len(encodedBytes))
+	db.bytesInBuffer += uint64(len(encodedEntry))
 	shouldFlush := db.bytesInBuffer >= uint64(db.config.MaxBufferBytes)
 	db.operationsBufferMutex.Unlock()
 
@@ -456,19 +510,36 @@ func (db *DB) writeOperations(ctx context.Context, ops []operation) error {
 		ops[i].Epoch = db.currentEpoch
 	}
 
-	// Encode all operations
+	// Encode all entries
 	var walBuffer bytes.Buffer
 	walEncoder := msgpack.NewEncoder(&walBuffer)
 	totalBytes := uint64(0)
 	for _, op := range ops {
-		err := walEncoder.Encode(op)
+		// Encode operation
+		var opBuf bytes.Buffer
+		opEncoder := msgpack.NewEncoder(&opBuf)
+		err := opEncoder.Encode(op)
 		if err != nil {
-			return WrappedError{Operation: "encode WAL batch", Err: err}
+			return WrappedError{Operation: "encode operation batch", Err: err}
 		}
-		// Measure size (approximate, since we already encoded)
+		encodedOp := opBuf.Bytes()
+
+		// Compute checksum
+		checksum := crc32.ChecksumIEEE(encodedOp)
+
+		// Create WAL entry
+		entry := walEntry{Operation: op, Checksum: checksum}
+
+		// Encode entry
+		err = walEncoder.Encode(entry)
+		if err != nil {
+			return WrappedError{Operation: "encode WAL entry batch", Err: err}
+		}
+
+		// Measure size
 		var tempBuf bytes.Buffer
 		tempEncoder := msgpack.NewEncoder(&tempBuf)
-		tempEncoder.Encode(op)
+		tempEncoder.Encode(entry)
 		totalBytes += uint64(tempBuf.Len())
 	}
 	walBytes := walBuffer.Bytes()

@@ -1,12 +1,5 @@
 # Tasks
 
-## 5. Security and Reliability
-
-- Current State: Basic file I/O with permissions.
-- Improvements:
-  - Add checksums to WAL entries for corruption detection.
-  - Harden against file system failures (e.g., disk full).
-
 ## 6. Code organization and maintainability
 
 - Current state: Well-structured into packages.

@@ -3,6 +3,7 @@ package nnut
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -253,6 +254,72 @@ func TestWALCorruptionHandling(t *testing.T) {
 	}
 	if retrieved.Name != "Test" {
 		t.Fatal("Data lost after WAL corruption")
+	}
+}
+
+func TestWALChecksumVerification(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), t.Name()+".db")
+	config := &Config{
+		WALFlushSize:     1024,
+		WALFlushInterval: time.Hour,
+		MaxBufferBytes:   100000,
+	}
+	db, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer os.Remove(dbPath)
+	defer os.Remove(dbPath + ".wal")
+
+	store, err := NewStore[TestUser](db, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Add data
+	user := TestUser{UUID: "checksum_test", Name: "Checksum", Email: "checksum@example.com", Age: 30}
+	store.Put(context.Background(), user)
+
+	// Close without flush
+	db.Close()
+
+	// Corrupt WAL by flipping a byte in the checksum
+	walPath := dbPath + ".wal"
+	file, err := os.OpenFile(walPath, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	data := make([]byte, 100)
+	n, err := file.Read(data)
+	if err != nil && err != io.EOF {
+		t.Fatalf("Failed to read WAL: %v", err)
+	}
+	if n > 10 {
+		// Flip a byte in the checksum area (last 4 bytes of entry)
+		pos := n - 5
+		data[pos] ^= 1
+		file.Seek(int64(pos), 0)
+		file.Write([]byte{data[pos]})
+	}
+	file.Close()
+
+	// Reopen - should detect checksum mismatch and discard WAL
+	db2, err := OpenWithConfig(dbPath, config)
+	if err != nil {
+		t.Fatalf("Failed to reopen DB after checksum corruption: %v", err)
+	}
+	defer db2.Close()
+
+	store2, err := NewStore[TestUser](db2, "users")
+	if err != nil {
+		t.Fatalf("Failed to create store: %v", err)
+	}
+
+	// Data should not be recovered (WAL discarded)
+	_, err = store2.Get(context.Background(), "checksum_test")
+	if err == nil {
+		t.Fatal("Data should not be recovered after checksum corruption")
 	}
 }
 
